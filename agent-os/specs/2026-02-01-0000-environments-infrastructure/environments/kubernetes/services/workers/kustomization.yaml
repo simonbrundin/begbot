@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: begbot
+
+resources:
+  - ../../base
+
+patches:
+  - path: replicas-patch.yaml
+  - path: resources-patch.yaml
+  - path: command-patch.yaml
+
+commonLabels:
+  component: workers
+  app: begbot-workers
+
+namePrefix: begbot-workers-

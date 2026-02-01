@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: begbot-prod
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - hpa.yaml
+
+patches:
+  - path: replicas.yaml
+    target:
+      name: begbot
+      kind: Deployment
+
+images:
+  - name: ghcr.io/simonbrundin/begbot:latest
+    newTag: $(IMAGE_TAG)

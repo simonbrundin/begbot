@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: begbot-api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: begbot-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: begbot-workers
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: begbot-workers

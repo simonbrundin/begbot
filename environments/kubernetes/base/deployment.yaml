@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: begbot
+  labels:
+    app: begbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: begbot
+  template:
+    metadata:
+      labels:
+        app: begbot
+    spec:
+      containers:
+        - name: begbot
+          image: ghcr.io/simonbrundin/begbot:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: begbot-config
+            - secretRef:
+                name: begbot-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

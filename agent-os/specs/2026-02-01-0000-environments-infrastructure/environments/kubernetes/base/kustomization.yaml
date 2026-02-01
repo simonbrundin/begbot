@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: begbot
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+  - secret.yaml
+
+commonLabels:
+  app: begbot
+  version: v1
+
+images:
+  - name: begbot-image
+    newName: ghcr.io/simonrosengren/begbot
+    newTag: latest

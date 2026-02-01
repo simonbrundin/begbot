@@ -1,0 +1,11 @@
+- op: replace
+  path: /spec/template/spec/containers/0/name
+  value: api
+- op: add
+  path: /spec/template/spec/containers/0/ports
+  value:
+    - containerPort: 8080
+      name: http
+- op: replace
+  path: /metadata/name
+  value: begbot-api

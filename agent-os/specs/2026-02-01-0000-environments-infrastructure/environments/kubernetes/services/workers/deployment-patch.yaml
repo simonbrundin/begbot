@@ -1,0 +1,11 @@
+- op: replace
+  path: /spec/template/spec/containers/0/name
+  value: workers
+- op: add
+  path: /spec/template/spec/containers/0/command
+  value:
+    - /app
+    - worker
+- op: replace
+  path: /metadata/name
+  value: begbot-workers

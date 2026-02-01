@@ -1,0 +1,21 @@
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+jwt_secret = "your-jwt-secret"
+
+[api]
+enabled = true
+port = 8000
+
+[db]
+port = 5432
+
+[storage]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[functions]
+enabled = true

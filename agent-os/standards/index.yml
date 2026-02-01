@@ -1,0 +1,19 @@
+# Agent OS Standards Index
+# This file indexes all standards in your project
+
+standards:
+  - name: configuration-structure
+    path: global/configuration-structure.md
+    description: Nested config structs, time.Duration timeouts
+  - name: currency-storage
+    path: database/currency-storage.md
+    description: Store monetary values as integers (SEK öre)
+  - name: email-sending
+    path: backend/email-sending.md
+    description: Use net/smtp for SMTP, StartTLS pattern
+  - name: llm-service-functions
+    path: backend/llm-service-functions.md
+    description: One LLM function per task, Action+Entity naming
+  - name: tech-stack
+    path: tech-stack.md
+    description: Technical stack and conventions

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: begbot-config
+data:
+  LOG_LEVEL: "info"
+  SCRAPING_TRADERA_ENABLED: "true"
+  SCRAPING_BLOKET_ENABLED: "true"
+  LLM_DEFAULT_MODEL: "deepseek/deepseek-v3.2"

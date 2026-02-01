@@ -1,0 +1,5 @@
+marketplaces:
+  blocket:
+    links:
+      - description: iPhones över 500 kr i bra skick
+        link: http://blocket.se/recommerce/forsale/search?condition=1&condition=2&condition=3&price_from=500&product_category=2.93.3217.39&q=iphone&shipping_types=0&sort=PUBLISHED_DESC

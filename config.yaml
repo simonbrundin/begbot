@@ -1,0 +1,46 @@
+database:
+  host: "aws-0-eu-west-1.pooler.supabase.com"
+  port: 6543
+  user: "postgres.fxhknzpqhrkpqothjvrx"
+  password: "vaf8PNB@gqj5wux4cje"
+  name: "postgres"
+  sslmode: "require"
+
+app:
+  log_level: "debug"
+  cache_ttl: 24h
+
+scraping:
+  tradera:
+    enabled: true
+    timeout: 30s
+  blocket:
+    enabled: true
+    timeout: 30s
+
+llm:
+  provider: "openrouter"
+  api_key: "LLM_API_KEY"
+  site_url: "http://localhost:3000"
+  site_name: "Begbot"
+  default_model: "deepseek/deepseek-v3.2"
+  models:
+    ExtractProductInfo: "deepseek/deepseek-v3.2"
+    ValidateProduct: "deepseek/deepseek-v3.2"
+    CheckProductCondition: "deepseek/deepseek-v3.2"
+    EstimateNewPrice: "deepseek/deepseek-v3.2"
+
+valuation:
+  target_sell_days: 14
+  min_profit_margin: 0.15
+  safety_margin: 0.2
+
+email:
+  smtp_host: "smtp.gmail.com"
+  smtp_port: "587"
+  smtp_username: "SMTP_USERNAME"
+  smtp_password: "SMTP_PASSWORD"
+  from: "SMTP_FROM"
+  recipients:
+    - "SMTP_FROM"
+    # - "freddie_tour@hotmail.com"

@@ -1,0 +1,7 @@
+database:
+  host: aws-0-eu-west-1.pooler.supabase.com
+  port: 6543
+  user: postgres.fxhknzpqhrkpqothjvrx
+  password: vaf8PNB@gqj5wux4cje
+  name: postgres
+  sslmode: require

@@ -1,0 +1,26 @@
+[project]
+id = "replaceme-project-id"
+name = "begbot"
+
+[auth]
+enabled = true
+email = { enable_signup = true, double_confirm_changes = true }
+site_url = "https://begbot.example.com"
+
+[db]
+pooler = { enabled = true, mode = "transaction", default_pool_size = 2 }
+
+[api]
+enabled = true
+port = 54321
+max_rows = 1000
+
+[storage]
+enabled = true
+
+[functions]
+enabled = true
+verify_jwt = true
+
+[analytics]
+enabled = false

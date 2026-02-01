@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: begbot-config
+  labels:
+    app: begbot
+data:
+  LOG_LEVEL: info
+  ENVIRONMENT: development
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: begbot
+  DATABASE_SSLMODE: disable
