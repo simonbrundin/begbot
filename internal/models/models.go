@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -9,9 +10,10 @@ type Product struct {
 	Brand             string    `json:"brand" db:"brand"`
 	Name              string    `json:"name" db:"name"`
 	Category          string    `json:"category" db:"category"`
-	ModelVariant      string    `json:"model_variant" db:"model_variant"`
+	ModelVariant      *string   `json:"model_variant,omitempty" db:"model_variant"`
 	SellPackagingCost int       `json:"sell_packaging_cost" db:"sell_packaging_cost"`
 	SellPostageCost   int       `json:"sell_postage_cost" db:"sell_postage_cost"`
+	NewPrice          *int      `json:"new_price,omitempty" db:"new_price"`
 	Enabled           bool      `json:"enabled" db:"enabled"`
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 }
@@ -43,19 +45,24 @@ type TradeStatus struct {
 }
 
 type Listing struct {
-	ID              int64      `json:"id" db:"id"`
-	ProductID       *int64     `json:"product_id,omitempty" db:"product_id"`
-	Price           *int       `json:"price,omitempty" db:"price"`
-	Link            string     `json:"link" db:"link"`
-	ConditionID     *int64     `json:"condition_id,omitempty" db:"condition_id"`
-	ShippingCost    *int       `json:"shipping_cost,omitempty" db:"shipping_cost"`
-	Description     string     `json:"description" db:"description"`
-	MarketplaceID   *int64     `json:"marketplace_id,omitempty" db:"marketplace_id"`
-	Status          string     `json:"status" db:"status"`
-	PublicationDate *time.Time `json:"publication_date,omitempty" db:"publication_date"`
-	SoldDate        *time.Time `json:"sold_date,omitempty" db:"sold_date"`
-	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
-	IsMyListing     bool       `json:"is_my_listing" db:"is_my_listing"`
+	ID                  int64      `json:"id" db:"id"`
+	ProductID           *int64     `json:"product_id,omitempty" db:"product_id"`
+	Price               *int       `json:"price,omitempty" db:"price"`
+	Valuation           int        `json:"valuation" db:"valuation"`
+	Link                string     `json:"link" db:"link"`
+	ConditionID         *int64     `json:"condition_id,omitempty" db:"condition_id"`
+	ShippingCost        *int       `json:"shipping_cost,omitempty" db:"shipping_cost"`
+	Title               string     `json:"title" db:"title"`
+	Description         *string    `json:"description,omitempty" db:"description"`
+	MarketplaceID       *int64     `json:"marketplace_id,omitempty" db:"marketplace_id"`
+	Status              string     `json:"status" db:"status"`
+	PublicationDate     *time.Time `json:"publication_date,omitempty" db:"publication_date"`
+	SoldDate            *time.Time `json:"sold_date,omitempty" db:"sold_date"`
+	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
+	IsMyListing         bool       `json:"is_my_listing" db:"is_my_listing"`
+	EligibleForShipping *bool      `json:"eligible_for_shipping,omitempty" db:"eligible_for_shipping"`
+	SellerPaysShipping  *bool      `json:"seller_pays_shipping,omitempty" db:"seller_pays_shipping"`
+	BuyNow              *bool      `json:"buy_now,omitempty" db:"buy_now"`
 }
 
 type Transaction struct {
@@ -129,4 +136,23 @@ type SearchCriteria struct {
 type SearchTermWithCriteria struct {
 	SearchTerm SearchTerm
 	Criteria   []SearchCriteria
+}
+
+type ValuationType struct {
+	ID   int16  `json:"id" db:"id"`
+	Name string `json:"name" db:"name"`
+}
+
+type Valuation struct {
+	ID              int64           `json:"id" db:"id"`
+	ProductID       *int64          `json:"product_id,omitempty" db:"product_id"`
+	ValuationTypeID *int16          `json:"valuation_type_id,omitempty" db:"valuation_type_id"`
+	Valuation       int             `json:"valuation" db:"valuation"`
+	Metadata        json.RawMessage `json:"metadata,omitempty" db:"metadata"`
+	CreatedAt       time.Time       `json:"created_at" db:"created_at"`
+}
+
+type ValuationWithProduct struct {
+	Valuation
+	ProductName string `json:"product_name"`
 }

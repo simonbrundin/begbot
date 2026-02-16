@@ -1,10 +1,63 @@
 # Begbot
 
-- [ ] Testa max requests från Tradera, Blocket
+## Secrets Management
+
+### Configuration
+
+All sensitive configuration is stored in environment variables. The application
+reads from:
+
+1. **`.env`** file (local development, gitignored)
+2. **Environment variables** (Kubernetes production)
+
+### Safe to Commit
+
+- `config.yaml` - Contains no secrets, only placeholders
+- `.env.example` - Contains empty placeholders with TODO comments
+
+### Not Committed
+
+- `.env` - Contains actual secrets (in .gitignore)
+- `.env.local` - Local overrides (in .gitignore)
+
+### Kubernetes Production
+
+Secrets are managed via **Vault** and **External Secrets Operator**:
+
+1. Secrets stored in Vault at path `prod/begbot`
+2. ExternalSecret resource (`base/externalsecret.yaml`) syncs to Kubernetes
+   Secret
+3. Deployment injects as environment variables:
+
+```yaml
+# base/deployment.yaml
+envFrom:
+  - configMapRef:
+      name: begbot-config
+  - secretRef:
+      name: begbot-secrets
+```
+
+### Setup for Local Development
+
+1. Copy `.env.example` to `.env`
+2. Fill in the actual secrets
+3. Run `go run ./cmd/main.go`
+
+**Note:** For production, add secrets to Vault:
+
+```bash
+vault kv put prod/begbot database_password=xxx llm_api_key=xxx smtp_username=xxx smtp_password=xxx smtp_from=xxx
+```
 
 ## Specs att köra
 
-- [ ] Lagra känslig information på ett säkert sätt.
+- [x] Säker lagring - Lagra känslig information på ett säkert sätt.
+- [ ]
+- [x] Frontend - skapa en frontend för min applikation där jag kan se vad jag
+      har till salu. alla annonser som sparats mm. egentligen allt i min databas
+      men i ett gui. jag vill att det ska vara byggt med nuxt och vue för det
+      har jag använt många gånger.
 - [x] Refactor för att förenkla
 - [x] Opencode har inte rättigheter att göra förändringar i databasen utan att
       be om lov

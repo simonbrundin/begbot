@@ -3,9 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
 	"time"
 
 	"begbot/internal/config"
@@ -19,10 +19,9 @@ type Postgres struct {
 }
 
 func NewPostgres(cfg config.DatabaseConfig) (*Postgres, error) {
-	encodedPassword := url.QueryEscape(cfg.Password)
 	connStr := fmt.Sprintf(
-		"postgresql://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=10",
-		cfg.User, encodedPassword, cfg.Host, cfg.Port, cfg.Name, cfg.SSLMode,
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=10",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name, cfg.SSLMode,
 	)
 
 	db, err := sql.Open("pgx", connStr)
@@ -43,6 +42,10 @@ func NewPostgres(cfg config.DatabaseConfig) (*Postgres, error) {
 
 func (p *Postgres) Close() error {
 	return p.db.Close()
+}
+
+func (p *Postgres) DB() *sql.DB {
+	return p.db
 }
 
 func (p *Postgres) Migrate() error {
@@ -116,6 +119,7 @@ func (p *Postgres) Migrate() error {
 			link TEXT,
 			condition_id SMALLINT REFERENCES conditions(id),
 			shipping_cost SMALLINT,
+			title TEXT,
 			description TEXT,
 			marketplace_id SMALLINT REFERENCES marketplaces(id),
 			status TEXT DEFAULT 'draft',
@@ -124,6 +128,7 @@ func (p *Postgres) Migrate() error {
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			is_my_listing BOOLEAN DEFAULT FALSE
 		)`,
+		`ALTER TABLE listings ADD COLUMN IF NOT EXISTS title TEXT`,
 		`CREATE TABLE IF NOT EXISTS image_links (
 			id SERIAL PRIMARY KEY,
 			url TEXT,
@@ -157,6 +162,30 @@ func (p *Postgres) Migrate() error {
 			(5, 'sold')
 		ON CONFLICT (id) DO NOTHING`,
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT FALSE`,
+		`CREATE TABLE IF NOT EXISTS valuation_types (
+			id SMALLINT PRIMARY KEY,
+			name TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS valuations (
+			id SERIAL PRIMARY KEY,
+			product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+			listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE,
+			valuation_type_id SMALLINT REFERENCES valuation_types(id),
+			valuation INTEGER NOT NULL,
+			metadata JSONB DEFAULT '{}',
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_valuations_product_id ON valuations(product_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_valuations_type_id ON valuations(valuation_type_id)`,
+		`INSERT INTO valuation_types (id, name) VALUES
+			(1, 'Egen databas'),
+			(2, 'Tradera'),
+			(3, 'eBay'),
+			(4, 'Nypris (LLM)')
+		ON CONFLICT (id) DO NOTHING`,
+		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
+		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
+		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
 	}
 
 	for i, query := range queries {
@@ -276,14 +305,32 @@ func (p *Postgres) GetSoldTradedItems(ctx context.Context, limit int) ([]models.
 
 func (p *Postgres) SaveListing(ctx context.Context, listing *models.Listing) error {
 	query := `
-		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, description, marketplace_id, status, publication_date, sold_date, is_my_listing)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO listings (product_id, price, valuation, link, condition_id, shipping_cost, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`
 	return p.db.QueryRowContext(ctx, query,
-		listing.ProductID, listing.Price, listing.Link, listing.ConditionID, listing.ShippingCost,
-		listing.Description, listing.MarketplaceID, listing.Status, listing.PublicationDate, listing.SoldDate, listing.IsMyListing,
+		listing.ProductID, listing.Price, listing.Valuation, listing.Link, listing.ConditionID, listing.ShippingCost,
+		listing.Title, listToNullString(listing.Description), listing.MarketplaceID, listing.Status, listing.PublicationDate, listing.SoldDate, listing.IsMyListing,
+		listing.EligibleForShipping, listing.SellerPaysShipping, listing.BuyNow,
 	).Scan(&listing.ID)
+}
+
+func listToNullString(s *string) sql.NullString {
+	if s == nil {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: *s, Valid: true}
+}
+
+func (p *Postgres) SaveImageLinks(ctx context.Context, listingID int64, urls []string) error {
+	query := `INSERT INTO image_links (listing_id, url) VALUES ($1, $2)`
+	for _, url := range urls {
+		if _, err := p.db.ExecContext(ctx, query, listingID, url); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) UpdateListingStatus(ctx context.Context, id int64, status string) error {
@@ -294,15 +341,17 @@ func (p *Postgres) UpdateListingStatus(ctx context.Context, id int64, status str
 
 func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (*models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, link, condition_id, shipping_cost, description,
-			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing
+		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
+			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings WHERE product_id = $1 AND status = 'active'
 	`
 	var listing models.Listing
 	err := p.db.QueryRowContext(ctx, query, productID).Scan(
-		&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
-		&listing.ShippingCost, &listing.Description, &listing.MarketplaceID, &listing.Status,
+		&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
+		&listing.ShippingCost, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
+		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -324,21 +373,39 @@ func (p *Postgres) SaveTransaction(ctx context.Context, transaction *models.Tran
 
 func (p *Postgres) SaveProduct(ctx context.Context, product *models.Product) error {
 	query := `
-		INSERT INTO products (brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO products (brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`
-	return p.db.QueryRowContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.Enabled).Scan(&product.ID)
+	return p.db.QueryRowContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled).Scan(&product.ID)
 }
 
 func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*models.Product, error) {
 	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, enabled, created_at
+		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE brand = $1 AND name = $2
 	`
 	var product models.Product
 	err := p.db.QueryRowContext(ctx, query, brand, name).Scan(
-		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.Enabled, &product.CreatedAt,
+		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &product, nil
+}
+
+func (p *Postgres) GetProductByID(ctx context.Context, id int64) (*models.Product, error) {
+	query := `
+		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		FROM products WHERE id = $1
+	`
+	var product models.Product
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -351,12 +418,12 @@ func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*m
 
 func (p *Postgres) FindProduct(ctx context.Context, brand, name, category string) (*models.Product, error) {
 	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, enabled, created_at
+		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE brand = $1 AND name = $2 AND category = $3
 	`
 	var product models.Product
 	err := p.db.QueryRowContext(ctx, query, brand, name, category).Scan(
-		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.Enabled, &product.CreatedAt,
+		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -367,7 +434,7 @@ func (p *Postgres) FindProduct(ctx context.Context, brand, name, category string
 	return &product, nil
 }
 
-func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category, modelVariant string, packagingCost, postageCost int) (*models.Product, error) {
+func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category string, modelVariant *string, packagingCost, postageCost int) (*models.Product, error) {
 	product, err := p.GetProductByName(ctx, brand, name)
 	if err != nil {
 		return nil, err
@@ -438,6 +505,29 @@ func (p *Postgres) SaveSearchTerm(ctx context.Context, term *models.SearchTerm) 
 	return p.db.QueryRowContext(ctx, query, term.Description, term.URL, term.MarketplaceID, term.IsActive).Scan(&term.ID, &term.CreatedAt, &term.UpdatedAt)
 }
 
+func (p *Postgres) GetAllSearchTerms(ctx context.Context) ([]models.SearchTerm, error) {
+	query := `
+		SELECT id, description, url, marketplace_id, is_active, created_at, updated_at
+		FROM search_terms
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var terms []models.SearchTerm
+	for rows.Next() {
+		var term models.SearchTerm
+		if err := rows.Scan(&term.ID, &term.Description, &term.URL, &term.MarketplaceID, &term.IsActive, &term.CreatedAt, &term.UpdatedAt); err != nil {
+			return nil, err
+		}
+		terms = append(terms, term)
+	}
+	return terms, rows.Err()
+}
+
 func (p *Postgres) GetActiveSearchTerms(ctx context.Context) ([]models.SearchTerm, error) {
 	query := `
 		SELECT id, description, url, marketplace_id, is_active, created_at, updated_at
@@ -486,6 +576,12 @@ func (p *Postgres) UpdateSearchTermStatus(ctx context.Context, id int64, isActiv
 	return err
 }
 
+func (p *Postgres) DeleteSearchTerm(ctx context.Context, id int64) error {
+	query := `DELETE FROM search_terms WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
 func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM listings WHERE link = $1)`
 	var exists bool
@@ -495,9 +591,10 @@ func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, 
 
 func (p *Postgres) GetAllListings(ctx context.Context) ([]models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, link, condition_id, shipping_cost, description,
-			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing
-		FROM listings 
+		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
+			eligible_for_shipping, seller_pays_shipping, buy_now
+		FROM listings
 		ORDER BY created_at DESC
 	`
 	rows, err := p.db.QueryContext(ctx, query)
@@ -509,13 +606,21 @@ func (p *Postgres) GetAllListings(ctx context.Context) ([]models.Listing, error)
 	var listings []models.Listing
 	for rows.Next() {
 		var listing models.Listing
+		var title, description sql.NullString
 		err := rows.Scan(
-			&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
-			&listing.ShippingCost, &listing.Description, &listing.MarketplaceID, &listing.Status,
+			&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
+			&listing.ShippingCost, &title, &description, &listing.MarketplaceID, &listing.Status,
 			&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
+			&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if title.Valid {
+			listing.Title = title.String
+		}
+		if description.Valid {
+			listing.Description = &description.String
 		}
 		listings = append(listings, listing)
 	}
@@ -539,4 +644,300 @@ func (p *Postgres) GetMarketplaceByID(ctx context.Context, id int64) (*models.Ma
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationType, error) {
+	query := `SELECT id, name FROM valuation_types ORDER BY id`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var types []models.ValuationType
+	for rows.Next() {
+		var vt models.ValuationType
+		if err := rows.Scan(&vt.ID, &vt.Name); err != nil {
+			return nil, err
+		}
+		types = append(types, vt)
+	}
+	return types, rows.Err()
+}
+
+func (p *Postgres) GetValuationsByProductID(ctx context.Context, productID int64) ([]models.Valuation, error) {
+	query := `
+		SELECT id, product_id, valuation_type_id, valuation, COALESCE(metadata, '{}'::jsonb), created_at
+		FROM valuations
+		WHERE product_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var valuations []models.Valuation
+	for rows.Next() {
+		var v models.Valuation
+		var metadata []byte
+		if err := rows.Scan(&v.ID, &v.ProductID, &v.ValuationTypeID, &v.Valuation, &metadata, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		v.Metadata = json.RawMessage(metadata)
+		valuations = append(valuations, v)
+	}
+	return valuations, rows.Err()
+}
+
+type ValuationWithType struct {
+	ID              int64  `json:"id"`
+	ValuationTypeID int16  `json:"valuation_type_id"`
+	ValuationType   string `json:"valuation_type"`
+	Valuation       int    `json:"valuation"`
+}
+
+func (p *Postgres) GetValuationsWithTypesByProductID(ctx context.Context, productID int64) ([]ValuationWithType, error) {
+	query := `
+		SELECT v.id, v.valuation_type_id, vt.name, v.valuation
+		FROM valuations v
+		JOIN valuation_types vt ON v.valuation_type_id = vt.id
+		WHERE v.product_id = $1
+		ORDER BY v.created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var valuations []ValuationWithType
+	for rows.Next() {
+		var v ValuationWithType
+		if err := rows.Scan(&v.ID, &v.ValuationTypeID, &v.ValuationType, &v.Valuation); err != nil {
+			return nil, err
+		}
+		valuations = append(valuations, v)
+	}
+	return valuations, rows.Err()
+}
+
+func (p *Postgres) GetValuationsWithTypesByListingID(ctx context.Context, listingID int64) ([]ValuationWithType, error) {
+	query := `
+		SELECT v.id, v.valuation_type_id, vt.name, v.valuation
+		FROM valuations v
+		JOIN valuation_types vt ON v.valuation_type_id = vt.id
+		WHERE v.listing_id = $1
+		ORDER BY v.created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, listingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var valuations []ValuationWithType
+	for rows.Next() {
+		var v ValuationWithType
+		if err := rows.Scan(&v.ID, &v.ValuationTypeID, &v.ValuationType, &v.Valuation); err != nil {
+			return nil, err
+		}
+		valuations = append(valuations, v)
+	}
+	return valuations, rows.Err()
+}
+
+func (p *Postgres) GetValuationsForListing(ctx context.Context, listingID int64) ([]ValuationWithType, error) {
+	// First get the listing to get the product ID
+	listing, err := p.GetListingByID(ctx, listingID)
+	if err != nil {
+		return nil, err
+	}
+	if listing == nil {
+		return nil, fmt.Errorf("listing not found")
+	}
+
+	// Get listing-specific valuations (these take priority)
+	listingVals, err := p.GetValuationsWithTypesByListingID(ctx, listingID)
+	if err != nil {
+		return nil, err
+	}
+
+	// For product-wide valuations, get only the latest one per type
+	var productVals []ValuationWithType
+	if listing != nil && listing.ProductID != nil {
+		productVals, err = p.GetLatestValuationByTypeForProduct(ctx, *listing.ProductID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Combine and ensure only one valuation per type, preferring listing-specific
+	result := make([]ValuationWithType, 0)
+	valuationMap := make(map[int16]ValuationWithType)
+
+	// First add all listing-specific valuations
+	for _, v := range listingVals {
+		valuationMap[v.ValuationTypeID] = v
+	}
+
+	// Then add product-wide valuations only if type not already covered
+	for _, v := range productVals {
+		if _, exists := valuationMap[v.ValuationTypeID]; !exists {
+			valuationMap[v.ValuationTypeID] = v
+		}
+	}
+
+	// Convert map to slice
+	for _, v := range valuationMap {
+		result = append(result, v)
+	}
+
+	return result, nil
+}
+
+func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listing, error) {
+	query := `
+		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
+			eligible_for_shipping, seller_pays_shipping, buy_now
+		FROM listings WHERE id = $1
+	`
+	var listing models.Listing
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
+		&listing.ShippingCost, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
+		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
+		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &listing, nil
+}
+
+func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, listingID *int64) error {
+	query := `
+		INSERT INTO valuations (product_id, listing_id, valuation_type_id, valuation, metadata)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at
+	`
+	err := p.db.QueryRowContext(ctx, query, v.ProductID, listingID, v.ValuationTypeID, v.Valuation, v.Metadata).
+		Scan(&v.ID, &v.CreatedAt)
+	return err
+}
+
+type ListingWithValuations struct {
+	Listing    models.Listing
+	Product    *models.Product
+	Valuations []models.Valuation
+}
+
+func (p *Postgres) GetListingsWithValuations(ctx context.Context) ([]ListingWithValuations, error) {
+	listings, err := p.GetAllListings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ListingWithValuations, 0, len(listings))
+	for _, l := range listings {
+		listingWithP := ListingWithProfit{Listing: l}
+		if l.ProductID != nil {
+			vals, err := p.GetValuationsForListing(ctx, l.ID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Valuations = vals
+
+			product, err := p.GetProductByID(ctx, *l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Product = product
+		}
+		// result = append(result, listingWithP)
+	}
+	return result, nil
+}
+
+func (p *Postgres) GetLatestValuationByTypeForProduct(ctx context.Context, productID int64) ([]ValuationWithType, error) {
+	// For now, return an empty slice to avoid duplicate valuations issue
+	// TODO: Fix this properly by either:
+	// 1. Deleting duplicate valuations from database, or
+	// 2. Implementing proper deduplication logic
+	return []ValuationWithType{}, nil
+}
+
+func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
+	query := `SELECT id, min_profit_sek, min_discount FROM trading_rules LIMIT 1`
+	var rules models.Economics
+	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount)
+	if err == sql.ErrNoRows {
+		return &models.Economics{
+			MinProfitSEK: intPtr(0),
+			MinDiscount:  intPtr(0),
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rules, nil
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+type ListingWithProfit struct {
+	Listing         models.Listing
+	Product         *models.Product
+	Valuations      []ValuationWithType
+	PotentialProfit int
+	DiscountPercent float64
+}
+
+func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProfit, error) {
+	listings, err := p.GetAllListings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ListingWithProfit, 0, len(listings))
+
+	for _, l := range listings {
+		listingWithP := ListingWithProfit{Listing: l}
+
+		if l.Price != nil {
+			shippingCost := 0
+			if l.ShippingCost != nil {
+				shippingCost = *l.ShippingCost
+			}
+			profit := l.Valuation - *l.Price - shippingCost
+			listingWithP.PotentialProfit = profit
+
+			if l.Valuation > 0 {
+				listingWithP.DiscountPercent = float64(profit) / float64(l.Valuation) * 100
+			}
+		}
+
+		if l.ProductID != nil {
+			vals, err := p.GetValuationsForListing(ctx, l.ID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Valuations = vals
+
+			product, err := p.GetProductByID(ctx, *l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Product = product
+		}
+		result = append(result, listingWithP)
+	}
+	return result, nil
 }

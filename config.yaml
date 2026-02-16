@@ -1,8 +1,8 @@
 database:
-  host: "aws-0-eu-west-1.pooler.supabase.com"
-  port: 6543
+  host: "aws-1-eu-west-1.pooler.supabase.com"
+  port: 5432
   user: "postgres.fxhknzpqhrkpqothjvrx"
-  password: "vaf8PNB@gqj5wux4cje"
+  password: "" # Set via DATABASE_PASSWORD env var
   name: "postgres"
   sslmode: "require"
 
@@ -20,7 +20,7 @@ scraping:
 
 llm:
   provider: "openrouter"
-  api_key: "LLM_API_KEY"
+  api_key: "" # Set via LLM_API_KEY env var
   site_url: "http://localhost:3000"
   site_name: "Begbot"
   default_model: "deepseek/deepseek-v3.2"
@@ -38,9 +38,9 @@ valuation:
 email:
   smtp_host: "smtp.gmail.com"
   smtp_port: "587"
-  smtp_username: "SMTP_USERNAME"
-  smtp_password: "SMTP_PASSWORD"
-  from: "SMTP_FROM"
+  smtp_username: "" # Set via SMTP_USERNAME env var
+  smtp_password: "" # Set via SMTP_PASSWORD env var
+  from: "" # Set via SMTP_FROM env var
   recipients:
     - "SMTP_FROM"
     # - "freddie_tour@hotmail.com"

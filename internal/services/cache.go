@@ -16,10 +16,14 @@ type CacheService struct {
 }
 
 func NewCacheService(cfg *config.Config) *CacheService {
+	ttl := 24 * time.Hour
+	if cfg != nil && cfg.App.CacheTTL > 0 {
+		ttl = cfg.App.CacheTTL
+	}
 	return &CacheService{
 		cfg:   cfg,
 		local: make(map[string]time.Time),
-		ttl:   cfg.App.CacheTTL,
+		ttl:   ttl,
 	}
 }
 

@@ -29,7 +29,7 @@ func main() {
 
 	searchTermSvc := services.NewSearchTermService(postgres)
 	llmSvc := services.NewLLMService(cfg)
-	valuationSvc := services.NewValuationService(cfg, postgres)
+	valuationSvc := services.NewValuationService(cfg, postgres, llmSvc)
 	botSvc := services.NewBotService(cfg, nil, nil, llmSvc, valuationSvc, postgres)
 
 	command := flag.String("cmd", "list", "Command to run: list, add, run, deactivate")
@@ -140,7 +140,7 @@ func runSearchTerms(ctx context.Context, svc *services.SearchTermService, postgr
 				ProductID:     &product.ID,
 				Link:          ad.Link,
 				Price:         &price,
-				Description:   ad.AdText,
+				Description:   &ad.AdText,
 				MarketplaceID: &job.Marketplace.ID,
 				Status:        "draft",
 			}

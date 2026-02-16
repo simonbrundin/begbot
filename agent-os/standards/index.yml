@@ -17,3 +17,6 @@ standards:
   - name: tech-stack
     path: tech-stack.md
     description: Technical stack and conventions
+  - name: swedish-text
+    path: frontend/swedish-text.md
+    description: All frontend text should be in Swedish

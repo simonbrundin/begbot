@@ -3,3 +3,6 @@
 *.local
 .DS_Store
 *.log
+frontend/.env
+frontend/.nuxt/
+frontend/node_modules/

@@ -8,6 +8,8 @@ import (
 	"begbot/internal/config"
 	"begbot/internal/db"
 	"begbot/internal/services"
+
+	"github.com/joho/godotenv"
 )
 
 func init() {
@@ -16,6 +18,7 @@ func init() {
 }
 
 func main() {
+	godotenv.Load()
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -44,7 +47,7 @@ func main() {
 	marketplaceService := services.NewMarketplaceService(cfg)
 	cacheService := services.NewCacheService(cfg)
 	llmService := services.NewLLMService(cfg)
-	valuationService := services.NewValuationService(cfg, database)
+	valuationService := services.NewValuationService(cfg, database, llmService)
 	botService := services.NewBotService(cfg, marketplaceService, cacheService, llmService, valuationService, database)
 
 	if err := botService.Run(); err != nil {

@@ -9,6 +9,12 @@ Establish foundational product documentation through an interactive conversation
 
 ### Step 1: Check for Existing Product Docs
 
+Trigger notification:
+```bash
+source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
+notify_input "Checking existing product documentation"
+```
+
 Check if `agent-os/product/` exists. If any files exist, ask if user wants to:
 
 1. Start fresh (replace all)
@@ -16,6 +22,12 @@ Check if `agent-os/product/` exists. If any files exist, ask if user wants to:
 3. Cancel
 
 ### Step 2: Gather Product Vision (for mission.md)
+
+Trigger notification:
+```bash
+source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
+notify_input "Gathering product vision"
+```
 
 Ask:
 
@@ -25,12 +37,24 @@ Ask:
 
 ### Step 3: Gather Roadmap (for roadmap.md)
 
+Trigger notification:
+```bash
+source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
+notify_input "Gathering roadmap information"
+```
+
 Ask:
 
 - **What are the must-have features for launch (MVP)?**
 - **What features are planned for after launch?**
 
 ### Step 4: Establish Tech Stack (for tech-stack.md)
+
+Trigger notification:
+```bash
+source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
+notify_input "Establishing tech stack"
+```
 
 Check if `agent-os/standards/global/tech-stack.md` exists. If it does, ask if this project uses the same tech stack or differs.
 
@@ -97,4 +121,10 @@ Create the `agent-os/product/` directory and generate each file:
 ## Other
 
 [Other tools, hosting, services]
+```
+
+Trigger notification when complete:
+```bash
+source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
+notify_complete "Product documentation created"
 ```
