@@ -69,14 +69,18 @@ ALTER TABLE listings ALTER COLUMN valuation SET NOT NULL;
 # Task: Visa delvärderingar i annonslistan
 
 **Date:** 2026-02-04
-**Status:** 📋 PENDING
-**Spec:** `agent-os/specs/2026-02-04-1200-listings-valuations-visning/`
+**Status:** ✅ COMPLETED
 
 ## Problem
 Användaren vill se individuella värderingar (delvärderingar) för varje annons, inte bara det sammanslagna värdet.
 
 ## Lösning
 Visa "X kr - Typ" för varje delvärdering direkt i listvyn.
+
+## Verifiering (2026-02-16)
+- API returnerar `Valuations` array med `valuation_type` och `valuation`
+- Frontend visar delvärderingar i ads.vue (rad 138-148)
+- Exempel: `Valuations: [{valuation_type: "eBay", valuation: 2000}, {valuation_type: "Nypris (LLM)", valuation: 7500}]`
 
 ## Tasks
 
