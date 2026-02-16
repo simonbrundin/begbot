@@ -834,7 +834,7 @@ func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, lis
 type ListingWithValuations struct {
 	Listing    models.Listing
 	Product    *models.Product
-	Valuations []models.Valuation
+	Valuations []ValuationWithType
 }
 
 func (p *Postgres) GetListingsWithValuations(ctx context.Context) ([]ListingWithValuations, error) {
@@ -845,21 +845,21 @@ func (p *Postgres) GetListingsWithValuations(ctx context.Context) ([]ListingWith
 
 	result := make([]ListingWithValuations, 0, len(listings))
 	for _, l := range listings {
-		listingWithP := ListingWithProfit{Listing: l}
+		listingWithV := ListingWithValuations{Listing: l}
 		if l.ProductID != nil {
 			vals, err := p.GetValuationsForListing(ctx, l.ID)
 			if err != nil {
 				return nil, err
 			}
-			listingWithP.Valuations = vals
+			listingWithV.Valuations = vals
 
 			product, err := p.GetProductByID(ctx, *l.ProductID)
 			if err != nil {
 				return nil, err
 			}
-			listingWithP.Product = product
+			listingWithV.Product = product
 		}
-		// result = append(result, listingWithP)
+		result = append(result, listingWithV)
 	}
 	return result, nil
 }
