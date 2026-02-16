@@ -15,6 +15,15 @@ import (
 	"begbot/internal/models"
 )
 
+const (
+	OrenToKronorFactor       = 100
+	MaxValuationRatio        = 10.0
+	ValuationTypeDatabase    = "Egen databas"
+	ValuationTypeTradera     = "Tradera"
+	ValuationTypeMarketplace = "eBay/Marknadsplatser"
+	ValuationTypeLLMNewPrice = "Nypris (LLM)"
+)
+
 type ValuationMethod interface {
 	Name() string
 	Priority() int
@@ -153,13 +162,13 @@ func (s *ValuationService) SaveValuationsWithListingID(ctx context.Context, prod
 
 func (s *ValuationService) getValuationTypeID(typeName string) int16 {
 	switch typeName {
-	case "Egen databas":
+	case ValuationTypeDatabase:
 		return 1
-	case "Tradera":
+	case ValuationTypeTradera:
 		return 2
-	case "eBay/Marknadsplatser":
+	case ValuationTypeMarketplace:
 		return 3
-	case "Nypris (LLM)":
+	case ValuationTypeLLMNewPrice:
 		return 4
 	default:
 		return 0
@@ -191,7 +200,7 @@ func (s *ValuationService) GetHistoricalValuation(ctx context.Context, productID
 			daysOnMarket = 7
 		}
 		x := float64(daysOnMarket)
-		y := float64(*item.SellPrice) / 100
+		y := float64(*item.SellPrice) / OrenToKronorFactor
 
 		sumX += x
 		sumY += y
@@ -264,7 +273,7 @@ type DatabaseValuationMethod struct {
 }
 
 func (m *DatabaseValuationMethod) Name() string {
-	return "Egen databas"
+	return ValuationTypeDatabase
 }
 
 func (m *DatabaseValuationMethod) Priority() int {
@@ -291,7 +300,7 @@ func (m *DatabaseValuationMethod) Valuate(ctx context.Context, productInfo Produ
 		sumWeight += weight
 	}
 
-	estimatedPrice := (sumPrice / sumWeight) / 100
+	estimatedPrice := (sumPrice / sumWeight) / OrenToKronorFactor
 	confidence := m.calculateConfidence(soldItems)
 
 	return &ValuationInput{
@@ -361,7 +370,7 @@ type LLMNewPriceMethod struct {
 }
 
 func (m *LLMNewPriceMethod) Name() string {
-	return "Nypris (LLM)"
+	return ValuationTypeLLMNewPrice
 }
 
 func (m *LLMNewPriceMethod) Priority() int {
@@ -430,7 +439,7 @@ type TraderaValuationMethod struct {
 }
 
 func (m *TraderaValuationMethod) Name() string {
-	return "Tradera"
+	return ValuationTypeTradera
 }
 
 func (m *TraderaValuationMethod) Priority() int {
@@ -465,7 +474,7 @@ type SoldAdsValuationMethod struct {
 }
 
 func (m *SoldAdsValuationMethod) Name() string {
-	return "eBay/Marknadsplatser"
+	return ValuationTypeMarketplace
 }
 
 func (m *SoldAdsValuationMethod) Priority() int {
@@ -573,7 +582,7 @@ func (c *ValuationCompiler) compileWithLLM(ctx context.Context, validInputs []Va
 func (c *ValuationCompiler) compileWeightedAverage(inputs []ValuationInput, allInputs []ValuationInput) (*ValuationOutput, error) {
 	var sumPrice, sumConfidence, totalWeight float64
 
-	newPrice := c.getNewPriceFromInputs(inputs)
+	newPrice := c.extractLLMNewPrice(inputs)
 
 	for _, input := range inputs {
 		weight := input.Confidence * input.Confidence
@@ -581,9 +590,9 @@ func (c *ValuationCompiler) compileWeightedAverage(inputs []ValuationInput, allI
 		sumConfidence += input.Confidence * weight
 		totalWeight += weight
 
-		if newPrice > 0 && input.Type == "Egen databas" {
+		if newPrice > 0 && input.Type == ValuationTypeDatabase {
 			ratio := float64(input.Value) / newPrice
-			if ratio > 10 {
+			if ratio > MaxValuationRatio {
 				log.Printf("WARNING: Valuation for '%s' is %.0fx above new price (value=%d, newPrice=%.0f)",
 					input.Type, ratio, input.Value, newPrice)
 			}
@@ -610,9 +619,9 @@ func (c *ValuationCompiler) compileWeightedAverage(inputs []ValuationInput, allI
 	}, nil
 }
 
-func (c *ValuationCompiler) getNewPriceFromInputs(inputs []ValuationInput) float64 {
+func (c *ValuationCompiler) extractLLMNewPrice(inputs []ValuationInput) float64 {
 	for _, input := range inputs {
-		if input.Type == "Nypris (LLM)" && input.Value > 0 {
+		if input.Type == ValuationTypeLLMNewPrice && input.Value > 0 {
 			return float64(input.Value)
 		}
 	}

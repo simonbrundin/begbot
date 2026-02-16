@@ -487,46 +487,46 @@ func TestValuationOutput_ReasonableBounds(t *testing.T) {
 		{
 			name: "happy path - normal valuation",
 			inputs: []ValuationInput{
-				{Type: "Egen databas", Value: 1500, Confidence: 0.7},
-				{Type: "Nypris (LLM)", Value: 2000, Confidence: 0.8},
+				{Type: ValuationTypeDatabase, Value: 1500, Confidence: 0.7},
+				{Type: ValuationTypeLLMNewPrice, Value: 2000, Confidence: 0.8},
 			},
 			newPrice: 2000,
-			maxRatio: 10.0,
+			maxRatio: MaxValuationRatio,
 		},
 		{
 			name: "edge case - valuation 100x too high",
 			inputs: []ValuationInput{
-				{Type: "Egen databas", Value: 150000, Confidence: 0.7},
+				{Type: ValuationTypeDatabase, Value: 150000, Confidence: 0.7},
 			},
 			newPrice: 2000,
-			maxRatio: 10.0,
+			maxRatio: MaxValuationRatio,
 			wantErr:  true,
 		},
 		{
 			name: "edge case - valuation at 10x new price boundary",
 			inputs: []ValuationInput{
-				{Type: "Egen databas", Value: 20000, Confidence: 0.7},
+				{Type: ValuationTypeDatabase, Value: 20000, Confidence: 0.7},
 			},
 			newPrice: 2000,
-			maxRatio: 10.0,
+			maxRatio: MaxValuationRatio,
 			wantErr:  true,
 		},
 		{
 			name: "edge case - valuation just under 10x new price",
 			inputs: []ValuationInput{
-				{Type: "Egen databas", Value: 19999, Confidence: 0.7},
+				{Type: ValuationTypeDatabase, Value: 19999, Confidence: 0.7},
 			},
 			newPrice: 2000,
-			maxRatio: 10.0,
+			maxRatio: MaxValuationRatio,
 			wantErr:  false,
 		},
 		{
 			name: "no new price - should not error",
 			inputs: []ValuationInput{
-				{Type: "Egen databas", Value: 1500, Confidence: 0.7},
+				{Type: ValuationTypeDatabase, Value: 1500, Confidence: 0.7},
 			},
 			newPrice: 0,
-			maxRatio: 10.0,
+			maxRatio: MaxValuationRatio,
 			wantErr:  false,
 		},
 	}
@@ -556,11 +556,11 @@ func TestValuationCompiler_LogsWarningForUnreasonableValuation(t *testing.T) {
 	newPrice := 2000.0
 	ratio := 50000.0 / newPrice
 
-	if ratio <= 10.0 {
+	if ratio <= MaxValuationRatio {
 		t.Skip("test requires valuation > 10x new price to verify warning logging")
 	}
 
-	if ratio > 10.0 {
+	if ratio > MaxValuationRatio {
 		t.Logf("Test would log warning for unreasonable valuation: ratio=%f (expected > 10x)", ratio)
 	}
 }
