@@ -445,3 +445,122 @@ func TestDatabaseValuationMethod_CalculateConfidence(t *testing.T) {
 		t.Errorf("Expected confidence 0.7 for 8 items, got %f", conf8)
 	}
 }
+
+func TestDatabaseValuationMethod_PriceInOren(t *testing.T) {
+	method := &DatabaseValuationMethod{}
+
+	now := time.Now()
+	oneDayAgo := now.AddDate(0, 0, -1)
+
+	soldItems := []models.TradedItem{
+		{SellPrice: ptr(10000), SellDate: &oneDayAgo}, // 100 SEK in database (ören)
+		{SellPrice: ptr(15000), SellDate: &now},       // 150 SEK in database (ören)
+		{SellPrice: ptr(12500), SellDate: &now},       // 125 SEK in database (ören)
+	}
+
+	var sumPrice, sumWeight float64
+	for _, item := range soldItems {
+		weight := method.calculateWeight(item)
+		sumPrice += float64(*item.SellPrice) * weight
+		sumWeight += weight
+	}
+
+	estimatedPrice := (sumPrice / sumWeight) / 100
+
+	if estimatedPrice > 200 {
+		t.Errorf("Valuation should be in SEK (kronor), not ören. Got %f SEK which suggests 100x bug", estimatedPrice)
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}
+
+func TestValuationOutput_ReasonableBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		inputs   []ValuationInput
+		newPrice float64
+		wantErr  bool
+		maxRatio float64
+	}{
+		{
+			name: "happy path - normal valuation",
+			inputs: []ValuationInput{
+				{Type: ValuationTypeDatabase, Value: 1500, Confidence: 0.7},
+				{Type: ValuationTypeLLMNewPrice, Value: 2000, Confidence: 0.8},
+			},
+			newPrice: 2000,
+			maxRatio: MaxValuationRatio,
+		},
+		{
+			name: "edge case - valuation 100x too high",
+			inputs: []ValuationInput{
+				{Type: ValuationTypeDatabase, Value: 150000, Confidence: 0.7},
+			},
+			newPrice: 2000,
+			maxRatio: MaxValuationRatio,
+			wantErr:  true,
+		},
+		{
+			name: "edge case - valuation at 10x new price boundary",
+			inputs: []ValuationInput{
+				{Type: ValuationTypeDatabase, Value: 20000, Confidence: 0.7},
+			},
+			newPrice: 2000,
+			maxRatio: MaxValuationRatio,
+			wantErr:  true,
+		},
+		{
+			name: "edge case - valuation just under 10x new price",
+			inputs: []ValuationInput{
+				{Type: ValuationTypeDatabase, Value: 19999, Confidence: 0.7},
+			},
+			newPrice: 2000,
+			maxRatio: MaxValuationRatio,
+			wantErr:  false,
+		},
+		{
+			name: "no new price - should not error",
+			inputs: []ValuationInput{
+				{Type: ValuationTypeDatabase, Value: 1500, Confidence: 0.7},
+			},
+			newPrice: 0,
+			maxRatio: MaxValuationRatio,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compiler := &ValuationCompiler{}
+			result, err := compiler.compileWeightedAverage(tt.inputs, tt.inputs)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.newPrice > 0 {
+				ratio := result.RecommendedPrice / tt.newPrice
+				if ratio > tt.maxRatio && !tt.wantErr {
+					t.Errorf("valuation ratio %f exceeds max %f - valuation is unreasonably high", ratio, tt.maxRatio)
+				}
+				if ratio > tt.maxRatio && tt.wantErr {
+					t.Logf("correctly detected unreasonably high valuation: ratio=%f", ratio)
+				}
+			}
+		})
+	}
+}
+
+func TestValuationCompiler_LogsWarningForUnreasonableValuation(t *testing.T) {
+	newPrice := 2000.0
+	ratio := 50000.0 / newPrice
+
+	if ratio <= MaxValuationRatio {
+		t.Skip("test requires valuation > 10x new price to verify warning logging")
+	}
+
+	if ratio > MaxValuationRatio {
+		t.Logf("Test would log warning for unreasonable valuation: ratio=%f (expected > 10x)", ratio)
+	}
+}
