@@ -191,7 +191,7 @@ func (s *ValuationService) GetHistoricalValuation(ctx context.Context, productID
 			daysOnMarket = 7
 		}
 		x := float64(daysOnMarket)
-		y := float64(*item.SellPrice)
+		y := float64(*item.SellPrice) / 100
 
 		sumX += x
 		sumY += y
@@ -291,7 +291,7 @@ func (m *DatabaseValuationMethod) Valuate(ctx context.Context, productInfo Produ
 		sumWeight += weight
 	}
 
-	estimatedPrice := sumPrice / sumWeight
+	estimatedPrice := (sumPrice / sumWeight) / 100
 	confidence := m.calculateConfidence(soldItems)
 
 	return &ValuationInput{
@@ -573,11 +573,21 @@ func (c *ValuationCompiler) compileWithLLM(ctx context.Context, validInputs []Va
 func (c *ValuationCompiler) compileWeightedAverage(inputs []ValuationInput, allInputs []ValuationInput) (*ValuationOutput, error) {
 	var sumPrice, sumConfidence, totalWeight float64
 
+	newPrice := c.getNewPriceFromInputs(inputs)
+
 	for _, input := range inputs {
 		weight := input.Confidence * input.Confidence
 		sumPrice += float64(input.Value) * weight
 		sumConfidence += input.Confidence * weight
 		totalWeight += weight
+
+		if newPrice > 0 && input.Type == "Egen databas" {
+			ratio := float64(input.Value) / newPrice
+			if ratio > 10 {
+				log.Printf("WARNING: Valuation for '%s' is %.0fx above new price (value=%d, newPrice=%.0f)",
+					input.Type, ratio, input.Value, newPrice)
+			}
+		}
 	}
 
 	if totalWeight == 0 {
@@ -598,4 +608,13 @@ func (c *ValuationCompiler) compileWeightedAverage(inputs []ValuationInput, allI
 		Reasoning:        fmt.Sprintf("Viktat genomsnitt baserat på %d metoder", len(inputs)),
 		IndividualVals:   allInputs,
 	}, nil
+}
+
+func (c *ValuationCompiler) getNewPriceFromInputs(inputs []ValuationInput) float64 {
+	for _, input := range inputs {
+		if input.Type == "Nypris (LLM)" && input.Value > 0 {
+			return float64(input.Value)
+		}
+	}
+	return 0
 }
