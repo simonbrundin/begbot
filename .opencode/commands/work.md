@@ -16,6 +16,7 @@ rg "^---\nstatus: (pending|in_progress)" agent-os/specs/*/plan.md -l --multiline
 ```
 
 This returns file paths like:
+
 ```
 agent-os/specs/2026-01-15-1430-feature-a/plan.md
 agent-os/specs/2026-01-16-0920-feature-b/plan.md
@@ -26,6 +27,7 @@ agent-os/specs/2026-01-16-0920-feature-b/plan.md
 ### Fallback (if rg unavailable)
 
 **IMPORTANT:** Do NOT read all spec files. If `rg` is not available:
+
 1. Use `grep` command instead: `grep -l "^status: (pending|in_progress)" agent-os/specs/*/plan.md`
 2. Only read the matching files
 3. If no matches found, report "No specs with pending work found"
@@ -42,6 +44,7 @@ rg "^---\nstatus: (pending|in_progress)" agent-os/specs/*/plan.md -l --multiline
 ```
 
 This gives spec folder names like:
+
 ```
 2026-01-15-1430-feature-a
 2026-01-16-0920-feature-b
@@ -54,6 +57,7 @@ This gives spec folder names like:
 For each spec with pending/in_progress status, read its `plan.md` and verify there are incomplete tasks.
 
 Skip specs where:
+
 - All tasks are marked complete
 - No tasks found
 
@@ -62,6 +66,7 @@ Skip specs where:
 If there are specs with pending work:
 
 Trigger notification before asking for input:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_input "Select which spec to work on"
@@ -78,6 +83,7 @@ Which spec would you like to work on?
 ```
 
 Format the list as:
+
 ```
 1. {spec-folder-name}
 2. {spec-folder-name}
@@ -87,6 +93,7 @@ Format the list as:
 If there are NO specs with pending work:
 
 Tell the user:
+
 ```
 No specs with pending work found. Would you like to create a new spec?
 
@@ -104,6 +111,7 @@ Once the user selects a spec:
 ## Step 6: Begin Work
 
 After user confirms, set the current working context to the selected spec and notify:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_complete "Started working on: $spec_name"
@@ -114,6 +122,7 @@ Begin the first pending task.
 ## Backwards Compatibility
 
 Specs without a status field are treated as `completed` to avoid reading all files. When encountering a spec without status:
+
 1. Skip it (treat as completed)
 2. Suggest updating the spec with status metadata if user wants to work on it
 

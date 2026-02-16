@@ -6,3 +6,13 @@
 frontend/.env
 frontend/.nuxt/
 frontend/node_modules/
+.todos/
+
+# Sidecar worktree state files
+.sidecar/
+.sidecar-agent
+.sidecar-task
+.sidecar-pr
+.sidecar-start.sh
+.sidecar-base
+.td-root
