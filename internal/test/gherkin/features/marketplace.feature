@@ -1,6 +1,6 @@
-Feature: Marketplace Ad Management user of the begbot system
-  I want to fetch and manage marketplace
-  As a ads
+Feature: Marketplace Ad Management
+  As a user of the begbot system
+  I want to fetch and manage marketplace ads
   So that I can track products for buying and selling
 
   Background:
