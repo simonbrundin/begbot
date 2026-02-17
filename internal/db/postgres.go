@@ -151,6 +151,20 @@ func (p *Postgres) Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_search_terms_marketplace_id ON search_terms(marketplace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_search_terms_is_active ON search_terms(is_active)`,
+		`CREATE TABLE IF NOT EXISTS search_history (
+			id SERIAL PRIMARY KEY,
+			search_term_id INTEGER REFERENCES search_terms(id),
+			search_term_desc TEXT,
+			url TEXT,
+			results_found INTEGER DEFAULT 0,
+			new_ads_found INTEGER DEFAULT 0,
+			marketplace_id SMALLINT REFERENCES marketplaces(id),
+			marketplace_name TEXT,
+			searched_at TIMESTAMPTZ DEFAULT NOW(),
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_search_history_search_term_id ON search_history(search_term_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_search_history_searched_at ON search_history(searched_at DESC)`,
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS category TEXT`,
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS model_variant TEXT`,
 		`UPDATE products SET category = 'phone' WHERE category IS NULL`,
@@ -580,6 +594,50 @@ func (p *Postgres) DeleteSearchTerm(ctx context.Context, id int64) error {
 	query := `DELETE FROM search_terms WHERE id = $1`
 	_, err := p.db.ExecContext(ctx, query, id)
 	return err
+}
+
+func (p *Postgres) SaveSearchHistory(ctx context.Context, h *models.SearchHistory) error {
+	query := `
+		INSERT INTO search_history (search_term_id, search_term_desc, url, results_found, new_ads_found, marketplace_id, marketplace_name, searched_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, created_at
+	`
+	return p.db.QueryRowContext(ctx, query,
+		h.SearchTermID, h.SearchTermDesc, h.URL, h.ResultsFound, h.NewAdsFound,
+		h.MarketplaceID, h.MarketplaceName, h.SearchedAt,
+	).Scan(&h.ID, &h.CreatedAt)
+}
+
+func (p *Postgres) GetSearchHistory(ctx context.Context, limit, offset int) ([]models.SearchHistory, error) {
+	query := `
+		SELECT id, search_term_id, search_term_desc, url, results_found, new_ads_found, 
+		       marketplace_id, marketplace_name, searched_at, created_at
+		FROM search_history
+		ORDER BY searched_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := p.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []models.SearchHistory
+	for rows.Next() {
+		var h models.SearchHistory
+		if err := rows.Scan(&h.ID, &h.SearchTermID, &h.SearchTermDesc, &h.URL, &h.ResultsFound, &h.NewAdsFound, &h.MarketplaceID, &h.MarketplaceName, &h.SearchedAt, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
+
+func (p *Postgres) GetSearchHistoryCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM search_history`
+	var count int
+	err := p.db.QueryRowContext(ctx, query).Scan(&count)
+	return count, err
 }
 
 func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, error) {

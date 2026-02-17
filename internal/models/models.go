@@ -156,3 +156,16 @@ type ValuationWithProduct struct {
 	Valuation
 	ProductName string `json:"product_name"`
 }
+
+type SearchHistory struct {
+	ID              int64     `json:"id" db:"id"`
+	SearchTermID    int64     `json:"search_term_id" db:"search_term_id"`
+	SearchTermDesc  string    `json:"search_term_desc" db:"search_term_desc"`
+	URL             string    `json:"url" db:"url"`
+	ResultsFound    int       `json:"results_found" db:"results_found"`
+	NewAdsFound     int       `json:"new_ads_found" db:"new_ads_found"`
+	MarketplaceID   *int64    `json:"marketplace_id,omitempty" db:"marketplace_id"`
+	MarketplaceName string    `json:"marketplace_name" db:"marketplace_name"`
+	SearchedAt      time.Time `json:"searched_at" db:"searched_at"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+}

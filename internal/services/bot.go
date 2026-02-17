@@ -130,6 +130,7 @@ func (s *BotService) Run() error {
 		s.log(LogLevelInfo, "Found %d ads for %s", len(adsList), term.Description)
 		totalAdsFound += len(adsList)
 
+		newAdsCount := 0
 		for _, ad := range adsList {
 			exists, err := s.database.ListingExistsByLink(ctx, ad.Link)
 			if err != nil {
@@ -140,12 +141,28 @@ func (s *BotService) Run() error {
 				s.log(LogLevelInfo, "Skipping duplicate: %s", ad.Link)
 				continue
 			}
+			newAdsCount++
 			s.log(LogLevelInfo, "Processing new ad: %s (price: %.0f SEK)", ad.Link, ad.Price)
 			if err := s.processAd(ctx, ad); err != nil {
 				s.log(LogLevelError, "Error processing ad %s: %v", ad.Link, err)
 			} else {
 				totalListingsSaved++
 			}
+		}
+
+		marketplaceName := s.getMarketplaceName(term.MarketplaceID)
+		history := &models.SearchHistory{
+			SearchTermID:    term.ID,
+			SearchTermDesc:  term.Description,
+			URL:             term.URL,
+			ResultsFound:    len(adsList),
+			NewAdsFound:     newAdsCount,
+			MarketplaceID:   term.MarketplaceID,
+			MarketplaceName: marketplaceName,
+			SearchedAt:      time.Now(),
+		}
+		if err := s.database.SaveSearchHistory(ctx, history); err != nil {
+			s.log(LogLevelWarning, "Failed to save search history: %v", err)
 		}
 
 		if s.jobService != nil && s.jobID != "" {

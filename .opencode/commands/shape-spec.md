@@ -11,6 +11,7 @@ when planning features.**
 ### Step 1: Clarify What We're Building
 
 Trigger notification before asking clarifying questions:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_input "Clarifying feature scope"
@@ -25,6 +26,7 @@ Understand the scope. Ask 1-2 clarifying questions if the scope is unclear:
 ### Step 2: Gather Visuals
 
 Trigger notification before asking about visuals:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_input "Gathering visual references"
@@ -41,6 +43,7 @@ If visuals are provided, note them for inclusion in the spec folder.
 ### Step 3: Identify Reference Implementations
 
 Trigger notification before asking about references:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_input "Identifying reference implementations"
@@ -91,6 +94,7 @@ Build out the remaining implementation tasks based on:
 - Constraints from standards
 
 Trigger notification when spec planning is complete:
+
 ```bash
 source "$HOME/.config/agent-os/scripts/notify.sh" 2>/dev/null || true
 notify_complete "Spec planning complete: $spec_name"

@@ -111,6 +111,19 @@ export interface SearchTermWithCriteria {
   criteria: SearchCriteria[]
 }
 
+export interface SearchHistory {
+  id: number
+  search_term_id: number
+  search_term_desc: string
+  url: string
+  results_found: number
+  new_ads_found: number
+  marketplace_id: number | null
+  marketplace_name: string
+  searched_at: string
+  created_at: string
+}
+
 export interface Valuation {
   id: number
   product_id: number | null

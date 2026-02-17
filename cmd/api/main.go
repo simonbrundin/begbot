@@ -34,8 +34,9 @@ func init() {
 }
 
 type Server struct {
-	db         *db.Postgres
-	jobService *services.JobService
+	db                   *db.Postgres
+	jobService           *services.JobService
+	searchHistoryService *services.SearchHistoryService
 }
 
 func main() {
@@ -57,7 +58,7 @@ func main() {
 		logger.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	server := &Server{db: database, jobService: services.NewJobService()}
+	server := &Server{db: database, jobService: services.NewJobService(), searchHistoryService: services.NewSearchHistoryService(database)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", server.healthHandler)
@@ -73,6 +74,7 @@ func main() {
 	mux.HandleFunc("/api/marketplaces", server.getMarketplaces)
 	mux.HandleFunc("/api/search-terms", server.searchTermsHandler)
 	mux.HandleFunc("/api/search-terms/", server.searchTermItemHandler)
+	mux.HandleFunc("/api/search-history", server.searchHistoryHandler)
 	mux.HandleFunc("/api/fetch-ads", func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
 	})
@@ -491,6 +493,58 @@ func (s *Server) searchTermItemHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(204)
 	}
+}
+
+func (s *Server) searchHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	history, count, err := s.searchHistoryService.GetHistory(r.Context(), page, pageSize)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	type PaginatedResponse struct {
+		Data       []models.SearchHistory `json:"data"`
+		TotalCount int                    `json:"total_count"`
+		Page       int                    `json:"page"`
+		PageSize   int                    `json:"page_size"`
+		TotalPages int                    `json:"total_pages"`
+	}
+
+	totalPages := count / pageSize
+	if count%pageSize > 0 {
+		totalPages++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       history,
+		TotalCount: count,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) compiledValuationsHandler(w http.ResponseWriter, r *http.Request) {
