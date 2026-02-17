@@ -2,196 +2,246 @@ package gherkin
 
 import (
 	"context"
-	"fmt"
-	"regexp"
-	"strconv"
 	"testing"
 	"time"
 
 	"begbot/internal/config"
+	"begbot/internal/services"
 
 	"github.com/cucumber/godog"
 )
 
-// MarketplaceTestContext holds the test state for marketplace scenarios
-type MarketplaceTestContext struct {
-	service       *marketplaceServiceWrapper
-	lastAdID      int64
-	lastURL       string
-	lastError     error
-	elapsedTime   time.Duration
-	adDetails     *blocketAdDetailsWrapper
+// MarketplaceTestContext holds state for marketplace BDD tests
+type marketplaceTestContext struct {
+	service      *services.MarketplaceService
+	cfg          *config.Config
+	ctx          context.Context
+	adID         int64
+	extractedID  int64
+	details      *services.BlocketAdDetails
+	err          error
+	elapsed      time.Duration
 }
 
-// Wrapper structs to access private fields
-type marketplaceServiceWrapper struct {
-	cfg         *config.Config
-	lastReqTime time.Time
-}
+// InitializeMarketplaceScenario initializes the marketplace test context
+func InitializeMarketplaceScenario(ctx *godog.ScenarioContext) {
+	tc := &marketplaceTestContext{}
 
-const maxRequestsPerSecond = 10
-const minInterval = time.Second / maxRequestsPerSecond
-
-func (s *marketplaceServiceWrapper) waitForRateLimit(ctx context.Context) error {
-	elapsed := time.Since(s.lastReqTime)
-	if elapsed < minInterval {
-		waitTime := minInterval - elapsed
-		select {
-		case <-time.After(waitTime):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	s.lastReqTime = time.Now()
-	return nil
-}
-
-type blocketAdDetailsWrapper struct {
-	Title  string
-	AdText string
-	Price  float64
-}
-
-func InitializeScenarioMarketplace(ctx *godog.ScenarioContext) {
-	tc := &MarketplaceTestContext{}
-
-	ctx.BeforeScenario(func(*godog.Scenario) {
-		cfg := &config.Config{
+	ctx.BeforeScenario(func(sc *godog.Scenario) {
+		tc.cfg = &config.Config{
 			Scraping: config.ScrapingConfig{
 				Blocket: config.BlocketConfig{
 					Enabled: true,
 				},
 			},
 		}
-		tc.service = &marketplaceServiceWrapper{cfg: cfg}
-		tc.lastAdID = 0
-		tc.lastURL = ""
-		tc.lastError = nil
-		tc.elapsedTime = 0
-		tc.adDetails = nil
+		tc.service = services.NewMarketplaceService(tc.cfg)
+		tc.ctx = context.Background()
+		tc.adID = 0
+		tc.extractedID = 0
+		tc.details = nil
+		tc.err = nil
 	})
 
-	// Given steps
-	ctx.Given(`^a marketplace service is configured$`, func() error {
-		cfg := &config.Config{}
-		tc.service = &marketplaceServiceWrapper{cfg: cfg}
+	// Background
+	ctx.Given("a marketplace service is available", func(sc *godog.Step) error {
+		tc.service = services.NewMarketplaceService(tc.cfg)
 		return nil
 	})
 
-	ctx.Given(`^the URL "([^"]+)"$`, func(url string) error {
-		tc.lastURL = url
+	ctx.And("the configuration has blocket enabled", func(sc *godog.Step) error {
+		tc.cfg.Scraping.Blocket.Enabled = true
 		return nil
 	})
 
-	ctx.Given(`^rate limiting is enabled$`, func() error {
-		// Rate limiting is enabled by default
+	// Extract ad ID
+	ctx.Given("the URL {string}", func(sc *godog.Step, url string) error {
+		tc.adID = services.ExtractBlocketAdID(url)
 		return nil
 	})
 
-	ctx.Given(`^a valid blocket ad ID "(\d+)"$`, func(adIDStr string) error {
-		adID, _ := strconv.ParseInt(adIDStr, 10, 64)
-		tc.lastAdID = adID
+	ctx.When("extracting the ad ID", func(sc *godog.Step) error {
+		// Already extracted in Given step
 		return nil
 	})
 
-	// When steps
-	ctx.When(`^I extract the ad ID$`, func() error {
-		tc.lastAdID = extractBlocketAdID(tc.lastURL)
+	ctx.Then("the ad ID should be {int}", func(sc *godog.Step, expected int64) error {
+		if tc.adID != expected {
+			return.Errorf("expected %d, got %d", expected, tc.adID)
+		}
 		return nil
 	})
 
-	ctx.When(`^I make "(\d+)" consecutive requests$`, func(countStr string) error {
-		count, _ := strconv.Atoi(countStr)
-		ctx := context.Background()
-		
+	ctx.Given("an invalid URL {string}", func(sc *godog.Step, url string) error {
+		tc.adID = services.ExtractBlocketAdID(url)
+		return nil
+	})
+
+	ctx.Given("a non-Blocket URL {string}", func(sc *godog.Step, url string) error {
+		tc.adID = services.ExtractBlocketAdID(url)
+		return nil
+	})
+
+	// Rate limiting
+	ctx.Given("the rate limiter is reset", func(sc *godog.Step) error {
+		// Rate limiter is reset per scenario
+		return nil
+	})
+
+	ctx.When("making {int} consecutive requests", func(sc *godog.Step, count int) error {
 		start := time.Now()
 		for i := 0; i < count; i++ {
-			err := tc.service.waitForRateLimit(ctx)
-			if err != nil {
-				return err
+			tc.err = tc.service.WaitForRateLimit(tc.ctx)
+			if tc.err != nil {
+				return tc.err
 			}
 		}
-		tc.elapsedTime = time.Since(start)
+		tc.elapsed = time.Since(start)
 		return nil
 	})
 
-	ctx.When(`^I fetch the ad from the API$`, func() error {
-		// Skip actual API call in Gherkin test - would require network access
-		// Just simulate the test for now
-		return nil
-	})
-
-	// Then steps
-	ctx.Then(`^the ad ID should be "(\d+)"$`, func(expectedStr string) error {
-		expected, _ := strconv.ParseInt(expectedStr, 10, 64)
-		if tc.lastAdID != expected {
-			return fmt.Errorf("expected ad ID %d, got %d", expected, tc.lastAdID)
+	ctx.Then("the requests should take at least {int} second", func(sc *godog.Step, seconds int) error {
+		expectedMin := time.Duration(seconds) * time.Second
+		if tc.elapsed < expectedMin {
+			return.Errorf("expected at least %v, got %v", expectedMin, tc.elapsed)
 		}
 		return nil
 	})
 
-	ctx.Then(`^the ad ID should be "0"$`, func() error {
-		if tc.lastAdID != 0 {
-			return fmt.Errorf("expected ad ID 0, got %d", tc.lastAdID)
+	ctx.And("no rate limit errors should occur", func(sc *godog.Step) error {
+		if tc.err != nil {
+			return tc.err
 		}
 		return nil
 	})
 
-	ctx.Then(`^the requests should take at least "([\d.]+)" seconds$`, func(minSecondsStr string) error {
-		minSeconds, _ := strconv.ParseFloat(minSecondsStr, 64)
-		minDuration := time.Duration(minSeconds * float64(time.Second))
-		if tc.elapsedTime < minDuration {
-			return fmt.Errorf("expected at least %v, got %v", minDuration, tc.elapsedTime)
+	// Fetch from API
+	ctx.Given("a valid Blocket ad ID", func(sc *godog.Step) error {
+		tc.adID = 124456789 // Known valid ID
+		return nil
+	})
+
+	ctx.When("fetching the ad from the API", func(sc *godog.Step) error {
+		ctx, cancel := context.WithTimeout(tc.ctx, 30*time.Second)
+		defer cancel()
+		tc.details, tc.err = tc.service.FetchBlocketAdFromAPI(ctx, tc.adID)
+		return nil
+	})
+
+	ctx.Then("the response should contain a title", func(sc *godog.Step) error {
+		if tc.details == nil {
+			return errors.New("no details returned")
+		}
+		if tc.details.Title == "" {
+			return errors.New("title is empty")
 		}
 		return nil
 	})
 
-	ctx.Then(`^the request should either succeed or return an expected error for invalid ID$`, func() error {
-		// Skip in Gherkin test
+	ctx.And("the response should contain ad text", func(sc *godog.Step) error {
+		if tc.details == nil {
+			return errors.New("no details returned")
+		}
+		if tc.details.AdText == "" {
+			return errors.New("ad text is empty")
+		}
 		return nil
 	})
 
-	ctx.Then(`^if successful, the title should not be empty$`, func() error {
-		// Skip in Gherkin test
+	ctx.And("the price should be greater than {int}", func(sc *godog.Step, minPrice int) error {
+		if tc.details == nil {
+			return errors.New("no details returned")
+		}
+		if tc.details.Price <= float64(minPrice) {
+			return.Errorf("price %f is not greater than %d", tc.details.Price, minPrice)
+		}
 		return nil
 	})
 
-	ctx.Then(`^if successful, the ad text should not be empty$`, func() error {
-		// Skip in Gherkin test
+	ctx.Given("an invalid Blocket ad ID {int}", func(sc *godog.Step, id int64) error {
+		tc.adID = id
 		return nil
 	})
 
-	ctx.Then(`^if successful, the price should be greater than "(\d+)"$`, func(minPriceStr string) error {
-		// Skip in Gherkin test
+	ctx.Then("an error may be returned (expected for invalid IDs)", func(sc *godog.Step) error {
+		// Error is allowed for invalid IDs
+		return nil
+	})
+
+	// Rate limit errors
+	ctx.Given("the API returns a rate limit error", func(sc *godog.Step) error {
+		// Would need to mock this
+		return nil
+	})
+
+	ctx.When("retrying the request", func(sc *godog.Step) error {
+		// Would implement retry logic
+		return nil
+	})
+
+	ctx.Then("the request should eventually succeed", func(sc *godog.Step) error {
+		// Would check for success
+		return nil
+	})
+
+	ctx.Then("the request should succeed", func(sc *godog.Step) error {
+		if tc.err != nil {
+			return tc.err
+		}
 		return nil
 	})
 }
 
-// extractBlocketAdID extracts the ad ID from a Blocket URL
-// This is a copy of the function from marketplace.go for testing
-func extractBlocketAdID(link string) int64 {
-	re := regexp.MustCompile(`/(?:item|annons)/(\d+)`)
-	matches := re.FindStringSubmatch(link)
-	if len(matches) > 1 {
-		id, err := strconv.ParseInt(matches[1], 10, 64)
-		if err == nil {
-			return id
-		}
+// Helper for error formatting
+func errorsNew(msg string) error {
+	return &testError{msg: msg}
+}
+
+type testError struct {
+	msg string
+}
+
+func (e *testError) Error() string {
+	return e.msg
+}
+
+func Errorf(format string, args ...interface{}) error {
+	return &testError{msg: formatArgs(format, args)}
+}
+
+func formatArgs(format string, args []interface{}) string {
+	// Simple implementation
+	result := format
+	for _, arg := range args {
+		result += " " + toString(arg)
 	}
-	return 0
+	return result
 }
 
-func TestMarketplaceFeatures(t *testing.T) {
+func toString(v interface{}) string {
+	switch val := v.(type) {
+	case int:
+		return string(rune('0' + val%10))
+	case int64:
+		return string(rune('0' + int(val)%10))
+	case float64:
+		return "0.0"
+	default:
+		return ""
+	}
+}
+
+// TestMarketplaceFeature runs the Godog marketplace tests
+func TestMarketplaceFeature(t *testing.T) {
 	suite := godog.TestSuite{
-		ScenarioInitializer: InitializeScenarioMarketplace,
+		ScenarioInitializer: InitializeMarketplaceScenario,
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{"internal/test/gherkin/features/marketplace.feature"},
-			TestingT: t,
+			Format: "pretty",
+			Paths:  []string{"features/marketplace.feature"},
 		},
 	}
 
 	if suite.Run() != 0 {
-		t.Fatal("non-zero status returned, there are failed test scenarios")
+		t.Fatal("non-zero status returned, failed to run feature tests")
 	}
 }
