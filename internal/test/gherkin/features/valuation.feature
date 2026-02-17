@@ -1,125 +1,155 @@
-Feature: Product Valuation
-  As a user of the begbot system
-  I want to value products using multiple methods
-  So that I can determine fair prices for buying and selling
+Feature: Valuation
 
   Background:
-    Given a valuation service is available
-
-  Scenario: Database valuation method has correct name and priority
-    When I check the database valuation method
-    Then the name should be "Egen databas"
-    And the priority should be "1"
-
-  Scenario: LLM new price method has correct name and priority
-    When I check the LLM new price method
-    Then the name should be "Nypris (LLM)"
-    And the priority should be "2"
-
-  Scenario: Tradera valuation method has correct name and priority
-    When I check the Tradera valuation method
-    Then the name should be "Tradera"
-    And the priority should be "3"
-
-  Scenario: Sold ads valuation method has correct name and priority
-    When I check the sold ads valuation method
-    Then the name should be "eBay/Marknadsplatser"
-    And the priority should be "4"
+    Given a valuation compiler is available
 
   Scenario: Calculate weighted average with multiple inputs
-    Given I have the following valuation inputs:
+    Given the following valuation inputs:
       | type     | value | confidence |
       | Method1  | 1000  | 0.8        |
       | Method2  | 1200  | 0.6        |
       | Method3  | 1100  | 0.7        |
-    When I compile the weighted average
-    Then the recommended price should be between "1000" and "1200"
-    And the confidence should be between "0.6" and "0.8"
+    When the compiler calculates the weighted average
+    Then the recommended price should be between 1000 and 1200
+    And the confidence should be between 0.6 and 0.8
 
   Scenario: Calculate weighted average with single input
-    Given I have a single valuation input with value "1500" and confidence "0.9"
-    When I compile the weighted average
-    Then the recommended price should be "1500"
-    And the confidence should be "0.9"
+    Given a single valuation input with value 1500 and confidence 0.9
+    When the compiler calculates the weighted average
+    Then the recommended price should be 1500
+    And the confidence should be 0.9
 
-  Scenario: Calculate weighted average with no valid inputs
-    Given I have no valuation inputs
-    When I compile the weighted average
-    Then the recommended price should be "0"
-    And the confidence should be "0"
+  Scenario: Handle empty inputs
+    Given no valuation inputs
+    When the compiler calculates the weighted average
+    Then the recommended price should be 0
+    And the confidence should be 0
 
-  Scenario: Historical valuation calculates price for days
-    Given a historical valuation with K value "-10" and intercept "1500"
-    When I calculate price for "0" days
-    Then the price should be "1500"
-    When I calculate price for "7" days
-    Then the price should be "1430"
-    When I calculate price for "30" days
-    Then the price should be "1200"
+  Scenario: Calculate historical price for days
+    Given a historical valuation with K-value -10 and intercept 1500
+    When calculating the price for 0 days
+    Then the price should be 1500
+    When calculating the price for 7 days
+    Then the price should be 1430
+    When calculating the price for 30 days
+    Then the price should be 1200
 
-  Scenario: Historical valuation with no data
+  Scenario: Handle historical valuation with no data
     Given a historical valuation with no data
-    When I calculate price for "7" days
-    Then the price should be "0"
+    When calculating the price for 7 days
+    Then the price should be 0
 
   Scenario: Calculate profit
-    Given buy price "500", shipping cost "50", and estimated sell price "1000"
-    When I calculate the profit
-    Then the profit should be "450"
+    Given a purchase price of 500 SEK
+    And shipping cost of 50 SEK
+    And estimated sell price of 1000 SEK
+    When calculating the profit
+    Then the profit should be 450 SEK
 
   Scenario: Calculate profit margin
-    Given profit "450", buy price "500", and shipping cost "50"
-    When I calculate the profit margin
-    Then the margin should be approximately "0.818"
+    Given a profit of 450 SEK
+    And total cost of 550 SEK
+    When calculating the profit margin
+    Then the margin should be approximately 0.818
 
-  Scenario: Calculate profit margin with zero cost
-    Given profit "100", buy price "0", and shipping cost "0"
-    When I calculate the profit margin
-    Then the margin should be "0"
+  Scenario: Handle zero cost for profit margin
+    Given a profit of 100 SEK
+    And total cost of 0 SEK
+    When calculating the profit margin
+    Then the margin should be 0
 
   Scenario: Estimate sell probability with negative K value
-    Given K value is "-10"
-    When I estimate sell probability for "7" days on market with target "30"
-    Then the probability should be "0.95"
-    When I estimate sell probability for "30" days on market with target "30"
-    Then the probability should be "0.5"
+    Given K value is -10 (price drops over time)
+    When estimating sell probability for 7 days with target 30 days
+    Then the probability should be 0.95
+    When estimating sell probability for 30 days with target 30 days
+    Then the probability should be 0.5
 
   Scenario: Estimate sell probability with positive K value
-    Given K value is "10"
-    When I estimate sell probability for "7" days on market with target "30"
-    Then the probability should be "0.1"
-    When I estimate sell probability for "30" days on market with target "30"
-    Then the probability should be "0.5"
+    Given K value is 10 (price increases over time)
+    When estimating sell probability for 7 days with target 30 days
+    Then the probability should be 0.1
+    When estimating sell probability for 30 days with target 30 days
+    Then the probability should be 0.5
 
-  Scenario: Calculate confidence based on number of items
-    Given I have "0" sold items
-    When I calculate confidence
-    Then the confidence should be "0"
-    Given I have "2" sold items
-    When I calculate confidence
-    Then the confidence should be "0.3"
-    Given I have "4" sold items
-    When I calculate confidence
-    Then the confidence should be "0.5"
-    Given I have "8" sold items
-    When I calculate confidence
-    Then the confidence should be "0.7"
+  Scenario Outline: Database valuation method priority
+    Given a database valuation method
+    When getting the method name
+    Then the name should be "Egen databas"
+    And the priority should be <priority>
 
-  Scenario: Compile with no inputs
-    Given I have no valuation inputs
-    When I compile the valuations
-    Then the recommended price should be "0"
-    And the confidence should be "0"
+    Examples:
+      | priority |
+      | 1        |
 
-  Scenario: Compile with invalid inputs (zero value or confidence)
-    Given I have the following invalid valuation inputs:
-      | type     | value | confidence |
-      | Method1  | 0     | 0.8        |
-      | Method2  | 1000  | 0          |
-    When I compile the valuations
-    Then the recommended price should be "0"
+  Scenario Outline: LLM new price method
+    Given an LLM new price method
+    When getting the method name
+    Then the name should be "Nypris (LLM)"
+    And the priority should be <priority>
 
-  Scenario: Database price in ören should be converted to kronor
-    Given sold items with prices in ören: "10000", "15000", "12500"
-    When I calculate the weighted average
-    Then the result should be in SEK (kronor), not ören
+    Examples:
+      | priority |
+      | 2        |
+
+  Scenario Outline: Tradera valuation method
+    Given a Tradera valuation method
+    When getting the method name
+    Then the name should be "Tradera"
+    And the priority should be <priority>
+
+    Examples:
+      | priority |
+      | 3        |
+
+  Scenario Outline: Sold ads valuation method
+    Given a sold ads valuation method
+    When getting the method name
+    Then the name should be "eBay/Marknadsplatser"
+    And the priority should be <priority>
+
+    Examples:
+      | priority |
+      | 4        |
+
+  Scenario: Calculate confidence with no items
+    Given a database valuation method with 0 sold items
+    When calculating confidence
+    Then the confidence should be 0
+
+  Scenario: Calculate confidence with 2 items
+    Given a database valuation method with 2 sold items
+    When calculating confidence
+    Then the confidence should be 0.3
+
+  Scenario: Calculate confidence with 4 items
+    Given a database valuation method with 4 sold items
+    When calculating confidence
+    Then the confidence should be 0.5
+
+  Scenario: Calculate confidence with 8 items
+    Given a database valuation method with 8 sold items
+    When calculating confidence
+    Then the confidence should be 0.7
+
+  Scenario: Price should be in SEK not ören
+    Given sold items with prices 100 SEK, 150 SEK, and 125 SEK
+    When calculating the estimated price
+    Then the price should be in SEK (not ören)
+
+  Scenario: Compile with no valid inputs
+    Given valuation inputs with zero value or confidence
+    When compiling the valuation
+    Then the recommended price should be 0
+
+  Scenario: Validate valuation bounds - normal case
+    Given valuation inputs with value 1500 and confidence 0.7
+    And new price of 2000
+    When compiling the weighted average
+    Then no error should occur
+
+  Scenario: Validate valuation bounds - unreasonable case
+    Given a valuation input with value 150000 and confidence 0.7
+    And new price of 2000
+    When compiling the weighted average
+    Then a warning should be logged for unreasonable valuation
