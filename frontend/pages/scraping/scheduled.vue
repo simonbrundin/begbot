@@ -30,13 +30,26 @@
               <button
                 @click="toggleActive(job)"
                 :class="job.is_active ? 'badge badge-success' : 'badge'"
+                :disabled="isJobRunning(job.id)"
               >
-                {{ job.is_active ? "Aktiv" : "Inaktiv" }}
+                <span v-if="isJobRunning(job.id)" class="flex items-center gap-1">
+                  <span class="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
+                  Körs...
+                </span>
+                <span v-else>{{ job.is_active ? "Aktiv" : "Inaktiv" }}</span>
               </button>
             </td>
             <td>
               <div class="flex gap-2">
                 <button
+                  v-if="isJobRunning(job.id)"
+                  @click="cancelJob(job.id)"
+                  class="text-yellow-400 hover:text-yellow-300 text-sm"
+                >
+                  Avbryt
+                </button>
+                <button
+                  v-else
                   @click="editJob(job)"
                   class="text-blue-400 hover:text-blue-300 text-sm"
                 >
@@ -159,6 +172,22 @@ const hasCronJobs = computed(() => cronJobs.value.length > 0);
 const loading = ref(false);
 const showAddModal = ref(false);
 const editingJob = ref<CronJob | null>(null);
+const runningJobIds = ref<number[]>([]);
+
+let statusInterval: ReturnType<typeof setInterval> | null = null;
+
+const isJobRunning = (id: number) => {
+  return runningJobIds.value.includes(id);
+};
+
+const fetchStatus = async () => {
+  try {
+    const status = await api.get<{ running_jobs: number[] }>('/cron-jobs/status');
+    runningJobIds.value = status.running_jobs || [];
+  } catch (e) {
+    console.error("Failed to fetch status:", e);
+  }
+};
 
 const form = ref({
   name: "",
@@ -201,6 +230,7 @@ const saveJob = async () => {
 
     closeModal();
     await fetchData();
+    await fetchStatus();
   } catch (e) {
     console.error("Failed to save cron job:", e);
     alert("Kunde inte spara cron-jobb: " + (e as Error).message);
@@ -227,6 +257,15 @@ const deleteJob = async (id: number) => {
   }
 };
 
+const cancelJob = async (id: number) => {
+  try {
+    await api.post('/cron-jobs/cancel', { job_id: id });
+    await fetchStatus();
+  } catch (e) {
+    console.error("Failed to cancel cron job:", e);
+  }
+};
+
 const toggleActive = async (job: CronJob) => {
   try {
     await api.put(`/cron-jobs/${job.id}`, { is_active: !job.is_active });
@@ -247,5 +286,15 @@ const closeModal = () => {
   };
 };
 
-onMounted(fetchData);
+onMounted(() => {
+  fetchData();
+  fetchStatus();
+  statusInterval = setInterval(fetchStatus, 5000);
+});
+
+onUnmounted(() => {
+  if (statusInterval) {
+    clearInterval(statusInterval);
+  }
+});
 </script>

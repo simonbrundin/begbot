@@ -38,6 +38,7 @@ type Server struct {
 	db                   *db.Postgres
 	jobService           *services.JobService
 	searchHistoryService *services.SearchHistoryService
+	scheduler            *services.Scheduler
 }
 
 func main() {
@@ -59,7 +60,18 @@ func main() {
 		logger.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	server := &Server{db: database, jobService: services.NewJobService(), searchHistoryService: services.NewSearchHistoryService(database)}
+	marketplaceService := services.NewMarketplaceService(cfg)
+	cacheService := services.NewCacheService(cfg)
+	llmService := services.NewLLMService(cfg)
+	valuationService := services.NewValuationService(cfg, database, llmService)
+	botService := services.NewBotService(cfg, marketplaceService, cacheService, llmService, valuationService, database)
+
+	scheduler := services.NewScheduler(database, cfg, botService)
+	if err := scheduler.Start(context.Background()); err != nil {
+		logger.Printf("Warning: Failed to start scheduler: %v", err)
+	}
+
+	server := &Server{db: database, jobService: services.NewJobService(), searchHistoryService: services.NewSearchHistoryService(database), scheduler: scheduler}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", server.healthHandler)
@@ -77,6 +89,8 @@ func main() {
 	mux.HandleFunc("/api/search-terms/", server.searchTermItemHandler)
 	mux.HandleFunc("/api/cron-jobs", server.cronJobsHandler)
 	mux.HandleFunc("/api/cron-jobs/", server.cronJobItemHandler)
+	mux.HandleFunc("/api/cron-jobs/status", server.cronJobsStatusHandler)
+	mux.HandleFunc("/api/cron-jobs/cancel", server.cronJobsCancelHandler)
 	mux.HandleFunc("/api/search-history", server.searchHistoryHandler)
 	mux.HandleFunc("/api/scraping-runs", server.scrapingRunsHandler)
 	mux.HandleFunc("/api/fetch-ads", func(w http.ResponseWriter, r *http.Request) {
@@ -600,6 +614,9 @@ func (s *Server) cronJobsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
 		w.WriteHeader(201)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(job)
@@ -640,6 +657,9 @@ func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(job)
 	case "DELETE":
@@ -647,8 +667,62 @@ func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
 		w.WriteHeader(204)
 	}
+}
+
+func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	var runningJobs []int64
+	if s.scheduler != nil {
+		running := s.scheduler.GetRunningJobs()
+		for id := range running {
+			runningJobs = append(runningJobs, id)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"running_jobs": runningJobs,
+	})
+}
+
+func (s *Server) cronJobsCancelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	var request struct {
+		JobID int64 `json:"job_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		api.WriteBadRequest(w, "Invalid request body")
+		return
+	}
+
+	if request.JobID == 0 {
+		api.WriteBadRequest(w, "job_id is required")
+		return
+	}
+
+	success := false
+	if s.scheduler != nil {
+		success = s.scheduler.CancelJob(request.JobID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": success,
+	})
 }
 
 func (s *Server) searchHistoryHandler(w http.ResponseWriter, r *http.Request) {

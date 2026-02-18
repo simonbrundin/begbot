@@ -692,6 +692,35 @@ func (p *Postgres) GetAllCronJobs(ctx context.Context) ([]models.CronJob, error)
 	return jobs, rows.Err()
 }
 
+func (p *Postgres) GetActiveCronJobs(ctx context.Context) ([]models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs
+		WHERE is_active = TRUE
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []models.CronJob
+	for rows.Next() {
+		var job models.CronJob
+		var searchTermIDsRaw interface{}
+		if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+		jobs = append(jobs, job)
+	}
+	if jobs == nil {
+		jobs = []models.CronJob{}
+	}
+	return jobs, rows.Err()
+}
+
 func (p *Postgres) GetCronJobByID(ctx context.Context, id int64) (*models.CronJob, error) {
 	query := `
 		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at

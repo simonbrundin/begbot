@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"begbot/internal/config"
 	"begbot/internal/db"
@@ -14,20 +13,22 @@ import (
 )
 
 type Scheduler struct {
-	db         *db.Postgres
-	cron       *cron.Cron
-	cfg        *config.Config
-	botService *BotService
-	running    map[int64]bool
+	db            *db.Postgres
+	cron          *cron.Cron
+	cfg           *config.Config
+	botService    *BotService
+	running       map[int64]bool
+	cancelledJobs map[int64]bool
 }
 
 func NewScheduler(db *db.Postgres, cfg *config.Config, botService *BotService) *Scheduler {
 	return &Scheduler{
-		db:         db,
-		cron:       cron.New(),
-		cfg:        cfg,
-		botService: botService,
-		running:    make(map[int64]bool),
+		db:            db,
+		cron:          cron.New(),
+		cfg:           cfg,
+		botService:    botService,
+		running:       make(map[int64]bool),
+		cancelledJobs: make(map[int64]bool),
 	}
 }
 
@@ -79,9 +80,18 @@ func (s *Scheduler) runJob(job models.CronJob) {
 
 	log.Printf("Starting job %d (%s)", job.ID, job.Name)
 
+	// Check if job was cancelled before starting
+	if s.cancelledJobs[job.ID] {
+		log.Printf("Job %d (%s) was cancelled before starting", job.ID, job.Name)
+		delete(s.cancelledJobs, job.ID)
+		s.running[job.ID] = false
+		return
+	}
+
 	searchTerms, err := s.db.GetActiveSearchTerms(context.Background())
 	if err != nil {
 		log.Printf("Error getting search terms for job %d: %v", job.ID, err)
+		s.running[job.ID] = false
 		return
 	}
 
@@ -118,6 +128,14 @@ func (s *Scheduler) runJob(job models.CronJob) {
 
 func (s *Scheduler) GetRunningJobs() map[int64]bool {
 	return s.running
+}
+
+func (s *Scheduler) CancelJob(jobID int64) bool {
+	if s.running[jobID] {
+		s.cancelledJobs[jobID] = true
+		return true
+	}
+	return false
 }
 
 func (s *Scheduler) RefreshJobs(ctx context.Context) error {

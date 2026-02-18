@@ -63,6 +63,10 @@ func NewBotServiceWithJob(cfg *config.Config, marketplaceService *MarketplaceSer
 	}
 }
 
+func (s *BotService) SetSearchTermsOverride(terms []models.SearchTerm) {
+	s.searchTermsOverride = terms
+}
+
 func (s *BotService) log(level LogLevel, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	log.Printf("[%s] %s", level, message)
@@ -92,6 +96,10 @@ func (s *BotService) Run() error {
 	if err != nil {
 		s.log(LogLevelError, "Error getting search terms: %v", err)
 		return fmt.Errorf("failed to get search terms: %w", err)
+	}
+
+	if len(s.searchTermsOverride) > 0 {
+		searchTerms = s.searchTermsOverride
 	}
 
 	s.log(LogLevelInfo, "Found %d search terms", len(searchTerms))
