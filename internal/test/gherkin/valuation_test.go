@@ -15,15 +15,15 @@ import (
 
 // ValuationTestContext holds state for valuation BDD tests
 type valuationTestContext struct {
-	compiler          *services.ValuationCompiler
-	inputs            []services.ValuationInput
-	result            *services.ValuationOutput
-	err               error
-	historicalVal     *services.HistoricalValuation
-	profit            float64
-	profitMargin      float64
-	sellProbability   float64
-	method            services.ValuationMethod
+	compiler        *services.ValuationCompiler
+	inputs          []services.ValuationInput
+	result          *services.ValuationOutput
+	err             error
+	historicalVal   *services.HistoricalValuation
+	profit          float64
+	profitMargin    float64
+	sellProbability float64
+	method          services.ValuationMethod
 }
 
 // InitializeValuationScenario initializes the valuation test context

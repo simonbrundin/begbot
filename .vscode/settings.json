@@ -1,0 +1,8 @@
+{
+  "chat.tools.terminal.autoApprove": {
+    "/^python3 tmp_send_email\\.py$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  }
+}

@@ -392,6 +392,28 @@ func (p *Postgres) SaveImageLinks(ctx context.Context, listingID int64, urls []s
 	return nil
 }
 
+func (p *Postgres) GetImageLinks(ctx context.Context, listingID int64) ([]string, error) {
+	query := `SELECT url FROM image_links WHERE listing_id = $1 ORDER BY id`
+	rows, err := p.db.QueryContext(ctx, query, listingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var urls []string
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		urls = append(urls, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
 func (p *Postgres) UpdateListingStatus(ctx context.Context, id int64, status string) error {
 	query := `UPDATE listings SET status = $1 WHERE id = $2`
 	_, err := p.db.ExecContext(ctx, query, status, id)

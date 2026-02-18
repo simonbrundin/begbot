@@ -490,7 +490,68 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		}
 
 		subject := "Ny annons som passar dina trading rules - " + listing.Title
-		err := SendMailHTML(emailCfg, s.cfg.Email.Recipients, subject, "mail.html")
+
+		// Prepare template data
+		priceStr := ""
+		if listing.Price != nil {
+			priceStr = fmt.Sprintf("%d kr", *listing.Price)
+		}
+		profit := listing.Valuation
+		if listing.Price != nil {
+			profit = listing.Valuation - *listing.Price
+		}
+		profitStr := fmt.Sprintf("%d kr", profit)
+		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
+
+		desc := ""
+		if listing.Description != nil {
+			desc = *listing.Description
+		}
+
+		brand := ""
+		name := ""
+		newPrice := ""
+		if product != nil {
+			if product.Brand != nil {
+				brand = *product.Brand
+			}
+			if product.Name != nil {
+				name = *product.Name
+			}
+			if product.NewPrice != nil {
+				newPrice = fmt.Sprintf("%d kr", *product.NewPrice)
+			}
+		}
+
+		// Fetch image URLs from DB (can be multiple)
+		var imageURLs []string
+		if s.database != nil {
+			if listing.ID != 0 {
+				if imgs, err := s.database.GetImageLinks(ctx, listing.ID); err == nil {
+					imageURLs = imgs
+				}
+			}
+		}
+
+		if len(imageURLs) == 0 {
+			imageURLs = []string{""}
+		}
+
+		mailData := map[string]interface{}{
+			"Title":       listing.Title,
+			"Price":       priceStr,
+			"Valuation":   fmt.Sprintf("%d kr", listing.Valuation),
+			"Profit":      profitStr,
+			"Discount":    discountStr,
+			"Description": desc,
+			"ImageURLs":   imageURLs,
+			"Link":        listing.Link,
+			"NewPrice":    newPrice,
+			"Brand":       brand,
+			"Name":        name,
+		}
+
+		err := SendMailHTMLWithData(emailCfg, s.cfg.Email.Recipients, subject, "mail.html", mailData)
 		if err != nil {
 			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
 		} else {
