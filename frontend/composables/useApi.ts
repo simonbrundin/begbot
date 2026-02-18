@@ -8,6 +8,7 @@ interface ApiOptions {
 export const useApi = () => {
   const config = useRuntimeConfig()
   const loadingStore = useLoadingStore()
+  const client = useSupabaseClient()
   
   const apiBase = config.public.apiBase
 
@@ -17,9 +18,18 @@ export const useApi = () => {
     loadingStore.startLoading()
     
     try {
+      // Get the current session token
+      const { data: { session } } = await client.auth.getSession()
+      const headers: Record<string, string> = {}
+      
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`
+      }
+
       const result = await $fetch<T>(url, {
         method: options?.method || 'GET',
-        body: options?.body
+        body: options?.body,
+        headers
       })
       return result
     } finally {

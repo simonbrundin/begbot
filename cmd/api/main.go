@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"begbot/internal/api"
+	"begbot/internal/auth"
 	"begbot/internal/config"
 	db "begbot/internal/db"
 	"begbot/internal/models"
@@ -59,30 +60,41 @@ func main() {
 
 	server := &Server{db: database, jobService: services.NewJobService()}
 
+	// Initialize auth middleware
+	supabaseURL := os.Getenv("SUPABASE_URL")
+	if supabaseURL == "" {
+		supabaseURL = "https://fxhknzpqqhrkpqothjvrx.supabase.co"
+	}
+	authMiddleware := auth.NewAuthMiddleware(supabaseURL)
+
 	mux := http.NewServeMux()
+	
+	// Health endpoint - no auth required
 	mux.HandleFunc("/api/health", server.healthHandler)
-	mux.HandleFunc("/api/inventory", server.inventoryHandler)
-	mux.HandleFunc("/api/inventory/", server.inventoryItemHandler)
-	mux.HandleFunc("/api/listings", server.listingsHandler)
-	mux.HandleFunc("/api/listings/", server.listingItemHandler)
-	mux.HandleFunc("/api/products", server.productsHandler)
-	mux.HandleFunc("/api/products/", server.productItemHandler)
-	mux.HandleFunc("/api/transactions", server.transactionsHandler)
-	mux.HandleFunc("/api/transactions/", server.transactionItemHandler)
-	mux.HandleFunc("/api/transaction-types", server.getTransactionTypes)
-	mux.HandleFunc("/api/marketplaces", server.getMarketplaces)
-	mux.HandleFunc("/api/search-terms", server.searchTermsHandler)
-	mux.HandleFunc("/api/search-terms/", server.searchTermItemHandler)
-	mux.HandleFunc("/api/fetch-ads", func(w http.ResponseWriter, r *http.Request) {
+	
+	// Protected endpoints - wrapped with auth middleware
+	mux.Handle("/api/inventory", authMiddleware.Middleware(http.HandlerFunc(server.inventoryHandler)))
+	mux.Handle("/api/inventory/", authMiddleware.Middleware(http.HandlerFunc(server.inventoryItemHandler)))
+	mux.Handle("/api/listings", authMiddleware.Middleware(http.HandlerFunc(server.listingsHandler)))
+	mux.Handle("/api/listings/", authMiddleware.Middleware(http.HandlerFunc(server.listingItemHandler)))
+	mux.Handle("/api/products", authMiddleware.Middleware(http.HandlerFunc(server.productsHandler)))
+	mux.Handle("/api/products/", authMiddleware.Middleware(http.HandlerFunc(server.productItemHandler)))
+	mux.Handle("/api/transactions", authMiddleware.Middleware(http.HandlerFunc(server.transactionsHandler)))
+	mux.Handle("/api/transactions/", authMiddleware.Middleware(http.HandlerFunc(server.transactionItemHandler)))
+	mux.Handle("/api/transaction-types", authMiddleware.Middleware(http.HandlerFunc(server.getTransactionTypes)))
+	mux.Handle("/api/marketplaces", authMiddleware.Middleware(http.HandlerFunc(server.getMarketplaces)))
+	mux.Handle("/api/search-terms", authMiddleware.Middleware(http.HandlerFunc(server.searchTermsHandler)))
+	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
+	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
-	})
-	mux.HandleFunc("/api/fetch-ads/status/", server.fetchAdsStatusHandler)
-	mux.HandleFunc("/api/fetch-ads/logs/", server.fetchAdsLogsHandler)
-	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
-	mux.HandleFunc("/api/valuation-types", server.valuationTypesHandler)
-	mux.HandleFunc("/api/valuations", server.valuationsHandler)
-	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
-	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
+	})))
+	mux.Handle("/api/fetch-ads/status/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsStatusHandler)))
+	mux.Handle("/api/fetch-ads/logs/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsLogsHandler)))
+	mux.Handle("/api/fetch-ads/cancel/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsCancelHandler)))
+	mux.Handle("/api/valuation-types", authMiddleware.Middleware(http.HandlerFunc(server.valuationTypesHandler)))
+	mux.Handle("/api/valuations", authMiddleware.Middleware(http.HandlerFunc(server.valuationsHandler)))
+	mux.Handle("/api/valuations/collect", authMiddleware.Middleware(http.HandlerFunc(server.collectValuationsHandler)))
+	mux.Handle("/api/valuations/compiled", authMiddleware.Middleware(http.HandlerFunc(server.compiledValuationsHandler)))
 
 	headers := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
