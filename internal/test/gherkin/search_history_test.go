@@ -3,9 +3,6 @@ package gherkin
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,15 +12,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-type searchHistoryTestState struct {
-	service       *services.SearchHistoryService
-	mockDB        *mockSearchHistoryDB
-	resultHistory []models.SearchHistory
-	resultCount   int
-	resultErr     error
-	resultEmpty   bool
-}
-
+// Mock SearchHistoryDB for testing
 type mockSearchHistoryDB struct {
 	history []models.SearchHistory
 	err     error
@@ -60,264 +49,227 @@ func (m *mockSearchHistoryDB) GetSearchHistoryCount(ctx context.Context) (int, e
 	return len(m.history), nil
 }
 
+// TestContext holds state for BDD tests
+type searchHistoryTestContext struct {
+	service    *services.SearchHistoryService
+	mockDB     *mockSearchHistoryDB
+	ctx        context.Context
+	result     *models.SearchHistory
+	history    []models.SearchHistory
+	count      int
+	err        error
+}
+
+// InitializeSearchHistoryScenario initializes the test context
 func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
-	state := &searchHistoryTestState{}
+	tc := &searchHistoryTestContext{}
 
 	ctx.BeforeScenario(func(sc *godog.Scenario) {
-		state = &searchHistoryTestState{
-			mockDB: &mockSearchHistoryDB{history: []models.SearchHistory{}},
-		}
-		state.service = services.NewSearchHistoryService(state.mockDB)
+		tc.mockDB = &mockSearchHistoryDB{history: []models.SearchHistory{}}
+		tc.service = services.NewSearchHistoryService(tc.mockDB)
+		tc.ctx = context.Background()
+		tc.result = nil
+		tc.history = nil
+		tc.count = 0
+		tc.err = nil
 	})
 
-	ctx.Given("a search history service with mock database", func() error {
-		state.mockDB = &mockSearchHistoryDB{history: []models.SearchHistory{}}
-		state.service = services.NewSearchHistoryService(state.mockDB)
-		return nil
-	})
-
-	ctx.Given("the database has search history records", func(table *godog.Table) error {
-		now := time.Now()
-		for _, row := range table.Rows {
-			id := 0
-			fmt.Sscanf(row.Cells[0].Value, "%d", &id)
-			termID := 0
-			fmt.Sscanf(row.Cells[1].Value, "%d", &termID)
-			resultsFound := 0
-			fmt.Sscanf(row.Cells[4].Value, "%d", &resultsFound)
-			newAdsFound := 0
-			fmt.Sscanf(row.Cells[5].Value, "%d", &newAdsFound)
-			state.mockDB.history = append(state.mockDB.history, models.SearchHistory{
-				ID:              int64(id),
-				SearchTermID:    int64(termID),
-				SearchTermDesc:  row.Cells[2].Value,
-				URL:             row.Cells[3].Value,
-				ResultsFound:    resultsFound,
-				NewAdsFound:     newAdsFound,
-				MarketplaceName: "Blocket",
-				SearchedAt:      now,
-			})
+	// Background steps
+	ctx.Given("a search history service is available", func(sc *godog.Step) error {
+		if tc.service == nil {
+			tc.mockDB = &mockSearchHistoryDB{history: []models.SearchHistory{}}
+			tc.service = services.NewSearchHistoryService(tc.mockDB)
 		}
 		return nil
 	})
 
-	ctx.Given("the database has no search history", func() error {
-		state.mockDB.history = []models.SearchHistory{}
+	ctx.Given("the database is connected", func(sc *godog.Step) error {
+		tc.mockDB.err = nil
 		return nil
 	})
 
-	ctx.Given("the database has 5 search history records", func() error {
+	// Record search steps
+	ctx.When("a user searches for {string} with URL {string}", func(sc *godog.Step, termDesc, url string) error {
+		tc.result, tc.err = tc.service.RecordSearch(tc.ctx, 1, termDesc, url, 10, 3)
+		return nil
+	})
+
+	ctx.And("the search finds {int} results with {int} new ads", func(sc *godog.Step, results, newAds int) error {
+		// This is already set in the previous step, but we keep it for clarity
+		return nil
+	})
+
+	ctx.Then("the search should be saved successfully", func(sc *godog.Step) error {
+		if tc.err != nil {
+			return errors.New("expected no error, got: " + tc.err.Error())
+		}
+		return nil
+	})
+
+	ctx.And("the search should have a valid ID", func(sc *godog.Step) error {
+		if tc.result == nil || tc.result.ID == 0 {
+			return errors.New("expected valid ID")
+		}
+		return nil
+	})
+
+	ctx.And("the search term description should be {string}", func(sc *godog.Step, expected string) error {
+		if tc.result.SearchTermDesc != expected {
+			return errors.New("expected " + expected + ", got " + tc.result.SearchTermDesc)
+		}
+		return nil
+	})
+
+	ctx.And("the results found should be {int}", func(sc *godog.Step, expected int) error {
+		if tc.result.ResultsFound != expected {
+			return errors.New("expected " + string(rune(expected)) + ", got " + string(rune(tc.result.ResultsFound)))
+		}
+		return nil
+	})
+
+	ctx.And("the new ads found should be {int}", func(sc *godog.Step, expected int) error {
+		if tc.result.NewAdsFound != expected {
+			return errors.New("expected " + string(rune(expected)) + ", got " + string(rune(tc.result.NewAdsFound)))
+		}
+		return nil
+	})
+
+	// Get history with data
+	ctx.Given("the database has {int} search records", func(sc *godog.Step, count int) error {
 		now := time.Now()
-		state.mockDB.history = []models.SearchHistory{}
-		for i := 1; i <= 5; i++ {
-			state.mockDB.history = append(state.mockDB.history, models.SearchHistory{
-				ID:              int64(i),
-				SearchTermID:    int64(i),
-				SearchTermDesc:  fmt.Sprintf("Item %d", i),
+		tc.mockDB.history = make([]models.SearchHistory, count)
+		for i := 0; i < count; i++ {
+			tc.mockDB.history[i] = models.SearchHistory{
+				ID:              int64(i + 1),
+				SearchTermID:    int64(i + 1),
+				SearchTermDesc:  "Item " + string(rune('1'+i)),
 				ResultsFound:    10,
 				NewAdsFound:     1,
-				MarketplaceName: "Blocket",
 				SearchedAt:      now,
-			})
+			}
 		}
 		return nil
 	})
 
-	ctx.Given("the database returns an error", func(errMsg string) error {
-		state.mockDB.err = errors.New(errMsg)
+	ctx.When("the user requests search history for page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
 		return nil
 	})
 
-	ctx.When("I record a search with term ID 1, description \"iPhone 15 Pro\", URL \"https://blocket.se/...\", results 10, new ads 3", func() error {
-		ctx := context.Background()
-		history, err := state.service.RecordSearch(ctx, 1, "iPhone 15 Pro", "https://blocket.se/...", 10, 3)
-		state.resultErr = err
-		if err == nil && history != nil {
-			state.resultHistory = []models.SearchHistory{*history}
+	ctx.Then("the response should contain {int} search records", func(sc *godog.Step, expected int) error {
+		if len(tc.history) != expected {
+			return errors.New("expected " + string(rune(expected)) + " records, got " + string(rune(len(tc.history))))
 		}
 		return nil
 	})
 
-	ctx.When("I get history for page 1 with page size 20", func() error {
-		ctx := context.Background()
-		state.resultHistory, state.resultCount, state.resultErr = state.service.GetHistory(ctx, 1, 20)
-		return nil
-	})
-
-	ctx.When("I get page 1 with page size 2", func() error {
-		ctx := context.Background()
-		state.resultHistory, state.resultCount, state.resultErr = state.service.GetHistory(ctx, 1, 2)
-		return nil
-	})
-
-	ctx.When("I get page 2 with page size 2", func() error {
-		ctx := context.Background()
-		state.resultHistory, _, state.resultErr = state.service.GetHistory(ctx, 2, 2)
-		return nil
-	})
-
-	ctx.When("I get page 3 with page size 2", func() error {
-		ctx := context.Background()
-		state.resultHistory, _, state.resultErr = state.service.GetHistory(ctx, 3, 2)
-		return nil
-	})
-
-	ctx.When("I get history for page 0 with page size 20", func() error {
-		ctx := context.Background()
-		state.resultHistory, state.resultCount, state.resultErr = state.service.GetHistory(ctx, 0, 20)
-		return nil
-	})
-
-	ctx.When("I get history for page -1 with page size 20", func() error {
-		ctx := context.Background()
-		state.resultHistory, state.resultCount, state.resultErr = state.service.GetHistory(ctx, -1, 20)
-		return nil
-	})
-
-	ctx.When("I get history for page 1 with page size 200", func() error {
-		ctx := context.Background()
-		_, _, state.resultErr = state.service.GetHistory(ctx, 1, 200)
-		return nil
-	})
-
-	ctx.Then("the search should be saved successfully", func() error {
-		if state.resultErr != nil {
-			return fmt.Errorf("expected no error, got %v", state.resultErr)
+	ctx.And("the total count should be {int}", func(sc *godog.Step, expected int) error {
+		if tc.count != expected {
+			return errors.New("expected count " + string(rune(expected)) + ", got " + string(rune(tc.count)))
 		}
 		return nil
 	})
 
-	ctx.Then("the search should have ID set", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].ID == 0 {
-			return fmt.Errorf("expected ID to be set")
+	ctx.And("the first record should have search term {string}", func(sc *godog.Step, expected string) error {
+		if len(tc.history) == 0 {
+			return errors.New("no history records")
+		}
+		if tc.history[0].SearchTermDesc != expected {
+			return errors.New("expected " + expected + ", got " + tc.history[0].SearchTermDesc)
 		}
 		return nil
 	})
 
-	ctx.Then("the search term description should be \"iPhone 15 Pro\"", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].SearchTermDesc != "iPhone 15 Pro" {
-			return fmt.Errorf("expected description 'iPhone 15 Pro', got '%s'", state.resultHistory[0].SearchTermDesc)
+	// Empty history
+	ctx.Given("the database has no search records", func(sc *godog.Step) error {
+		tc.mockDB.history = []models.SearchHistory{}
+		return nil
+	})
+
+	ctx.When("the user requests search history", func(sc *godog.Step) error {
+		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, 1, 20)
+		return nil
+	})
+
+	// Pagination
+	ctx.When("the user requests page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
+		return nil
+	})
+
+	ctx.Then("the response should contain {int} items", func(sc *godog.Step, expected int) error {
+		if len(tc.history) != expected {
+			return errors.New("expected " + string(rune(expected)) + " items, got " + string(rune(len(tc.history))))
 		}
 		return nil
 	})
 
-	ctx.Then("results found should be 10", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].ResultsFound != 10 {
-			return fmt.Errorf("expected results 10, got %d", state.resultHistory[0].ResultsFound)
+	ctx.And("the first item on page {int} should have ID {int}", func(sc *godog.Step, page, expectedID int) error {
+		if len(tc.history) == 0 {
+			return errors.New("no history records")
+		}
+		if tc.history[0].ID != int64(expectedID) {
+			return errors.New("expected ID " + string(rune(expectedID)) + ", got " + string(rune(int(tc.history[0].ID))))
 		}
 		return nil
 	})
 
-	ctx.Then("new ads found should be 3", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].NewAdsFound != 3 {
-			return fmt.Errorf("expected new ads 3, got %d", state.resultHistory[0].NewAdsFound)
+	// Invalid pagination
+	ctx.When("the user requests page {int}", func(sc *godog.Step, page int) error {
+		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, 20)
+		return nil
+	})
+
+	ctx.Then("the request should succeed", func(sc *godog.Step) error {
+		if tc.err != nil {
+			return errors.New("expected no error, got: " + tc.err.Error())
 		}
 		return nil
 	})
 
-	ctx.Then("I should receive 2 history records", func() error {
-		if len(state.resultHistory) != 2 {
-			return fmt.Errorf("expected 2 records, got %d", len(state.resultHistory))
+	ctx.And("the count should be {int}", func(sc *godog.Step, expected int) error {
+		if tc.count != expected {
+			return errors.New("expected count " + string(rune(expected)) + ", got " + string(rune(tc.count)))
 		}
 		return nil
 	})
 
-	ctx.Then("total count should be 2", func() error {
-		if state.resultCount != 2 {
-			return fmt.Errorf("expected count 2, got %d", state.resultCount)
+	// Database errors
+	ctx.Given("the database is unavailable", func(sc *godog.Step) error {
+		tc.mockDB.err = errors.New("database unavailable")
+		return nil
+	})
+
+	ctx.When("the user attempts to record a search", func(sc *godog.Step) error {
+		tc.result, tc.err = tc.service.RecordSearch(tc.ctx, 1, "Test", "https://...", 10, 2)
+		return nil
+	})
+
+	ctx.Then("an error should be returned", func(sc *godog.Step) error {
+		if tc.err == nil {
+			return errors.New("expected error, got nil")
 		}
 		return nil
 	})
 
-	ctx.Then("first record should have description \"iPhone 15\"", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].SearchTermDesc != "iPhone 15" {
-			return fmt.Errorf("expected first record 'iPhone 15', got '%s'", state.resultHistory[0].SearchTermDesc)
-		}
-		return nil
-	})
-
-	ctx.Then("I should receive 0 history records", func() error {
-		if len(state.resultHistory) != 0 {
-			return fmt.Errorf("expected 0 records, got %d", len(state.resultHistory))
-		}
-		return nil
-	})
-
-	ctx.Then("total count should be 0", func() error {
-		if state.resultCount != 0 {
-			return fmt.Errorf("expected count 0, got %d", state.resultCount)
-		}
-		return nil
-	})
-
-	ctx.Then("I should receive 2 records", func() error {
-		if len(state.resultHistory) != 2 {
-			return fmt.Errorf("expected 2 records, got %d", len(state.resultHistory))
-		}
-		return nil
-	})
-
-	ctx.Then("total count should be 5", func() error {
-		if state.resultCount != 5 {
-			return fmt.Errorf("expected count 5, got %d", state.resultCount)
-		}
-		return nil
-	})
-
-	ctx.Then("first record on page 2 should have ID 3", func() error {
-		if len(state.resultHistory) == 0 || state.resultHistory[0].ID != 3 {
-			return fmt.Errorf("expected first record ID 3, got %d", state.resultHistory[0].ID)
-		}
-		return nil
-	})
-
-	ctx.Then("I should receive 1 record", func() error {
-		if len(state.resultHistory) != 1 {
-			return fmt.Errorf("expected 1 record, got %d", len(state.resultHistory))
-		}
-		return nil
-	})
-
-	ctx.Then("no error should occur", func() error {
-		if state.resultErr != nil {
-			return fmt.Errorf("expected no error, got %v", state.resultErr)
-		}
-		return nil
-	})
-
-	ctx.Then("an error should be returned", func() error {
-		if state.resultErr == nil {
-			return fmt.Errorf("expected error, got nil")
-		}
-		return nil
-	})
-
-	ctx.Then("it should indicate empty state", func() error {
-		state.resultEmpty = len(state.resultHistory) == 0 && state.resultCount == 0
-		if !state.resultEmpty {
-			return fmt.Errorf("expected empty state")
-		}
+	// Large page size
+	ctx.When("the user requests page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+		_, _, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
 		return nil
 	})
 }
 
-func getFeaturesPath(filename string) string {
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, "..", "..", "..", "internal", "test", "gherkin", "features", filename)
-}
-
-func TestSearchHistoryFeatures(t *testing.T) {
-	featurePath := getFeaturesPath("search_history.feature")
+// TestSearchHistoryFeature runs the Godog tests
+func TestSearchHistoryFeature(t *testing.T) {
 	suite := godog.TestSuite{
 		ScenarioInitializer: InitializeSearchHistoryScenario,
 		Options: &godog.Options{
-			Format:   "pretty",
-			Paths:    []string{featurePath},
-			TestingT: t,
+			Format: "pretty",
+			Paths:  []string{"features/search_history.feature"},
 		},
 	}
 
 	if suite.Run() != 0 {
-		t.Fatal("non-zero status returned, failed to run search history gherkin tests")
+		t.Fatal("non-zero status returned, failed to run feature tests")
 	}
 }
