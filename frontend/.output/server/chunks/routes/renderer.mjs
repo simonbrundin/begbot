@@ -1,11 +1,10 @@
 import { createRenderer, getRequestDependencies, getPreloadLinks, getPrefetchLinks } from 'vue-bundle-renderer/runtime';
-import { j as joinRelativeURL, u as useRuntimeConfig, g as getResponseStatusText, a as getResponseStatus, d as decodePath, b as defineRenderHandler, c as getQuery, e as createError, f as getRouteRules, h as joinURL, i as useNitroApp } from '../nitro/nitro.mjs';
+import { j as joinRelativeURL, u as useRuntimeConfig, g as getResponseStatusText, a as getResponseStatus, d as decodePath, b as defineRenderHandler, c as getQuery, e as createError, f as destr, h as getRouteRules, i as joinURL, k as useNitroApp } from '../nitro/nitro.mjs';
 import { renderToString } from 'vue/server-renderer';
 import { createHead as createHead$1, propsToString, renderSSRHead } from 'unhead/server';
 import { stringify, uneval } from 'devalue';
 import { walkResolver } from 'unhead/utils';
 import { isRef, toValue, hasInjectionContext, inject, ref, watchEffect, getCurrentInstance, onBeforeUnmount, onDeactivated, onActivated } from 'vue';
-import { DeprecationsPlugin, PromisesPlugin, TemplateParamsPlugin, AliasSortingPlugin } from 'unhead/plugins';
 
 const VueResolver = (_, value) => {
   return isRef(value) ? toValue(value) : value;
@@ -87,6 +86,10 @@ const appTeleportTag = "div";
 
 const appTeleportAttrs = {"id":"teleports"};
 
+const appSpaLoaderTag = "div";
+
+const appSpaLoaderAttrs = {"id":"__nuxt-loader"};
+
 const appId = "nuxt-app";
 
 function baseURL() {
@@ -141,7 +144,11 @@ const getSPARenderer = lazyCachedFunction(async () => {
 	// @ts-expect-error virtual file
 	const spaTemplate = await import('../virtual/_virtual_spa-template.mjs').then((r) => r.template).catch(() => "").then((r) => {
 		{
-			return APP_ROOT_OPEN_TAG + r + APP_ROOT_CLOSE_TAG;
+			const APP_SPA_LOADER_OPEN_TAG = `<${appSpaLoaderTag}${propsToString(appSpaLoaderAttrs)}>`;
+			const APP_SPA_LOADER_CLOSE_TAG = `</${appSpaLoaderTag}>`;
+			const appTemplate = APP_ROOT_OPEN_TAG + APP_ROOT_CLOSE_TAG;
+			const loaderTemplate = r ? APP_SPA_LOADER_OPEN_TAG + r + APP_SPA_LOADER_CLOSE_TAG : "";
+			return appTemplate + loaderTemplate;
 		}
 	});
 	// Create SPA renderer and cache the result for all requests
@@ -229,8 +236,6 @@ function splitPayload(ssrContext) {
 
 const unheadOptions = {
   disableDefaults: true,
-  disableCapoSorting: false,
-  plugins: [DeprecationsPlugin, PromisesPlugin, TemplateParamsPlugin, AliasSortingPlugin],
 };
 
 function createSSRContext(event) {
@@ -267,9 +272,9 @@ async function renderInlineStyles(usedModules) {
 	return Array.from(inlinedStyles).map((style) => ({ innerHTML: style }));
 }
 
-const renderSSRHeadOptions = {"omitLineBreaks":false};
+const renderSSRHeadOptions = {"omitLineBreaks":true};
 
-const entryIds = ["node_modules/nuxt/dist/app/entry.js"];
+const entryIds = [];
 
 // @ts-expect-error private property consumed by vite-generated url helpers
 globalThis.__buildAssetsURL = buildAssetsURL;
@@ -302,6 +307,11 @@ const renderer = defineRenderHandler(async (event) => {
 		if (status) {
 			// eslint-disable-next-line @typescript-eslint/no-deprecated
 			ssrError.status = ssrError.statusCode = Number.parseInt(status);
+		}
+		if (typeof ssrError.data === "string") {
+			try {
+				ssrError.data = destr(ssrError.data);
+			} catch {}
 		}
 		setSSRError(ssrContext, ssrError);
 	}
@@ -408,7 +418,6 @@ const renderer = defineRenderHandler(async (event) => {
 				ssrContext.modules?.delete(id);
 			}
 		}
-		// TODO: add priorities based on Capo
 		ssrContext.head.push({ link: getPreloadLinks(ssrContext, renderer.rendererContext) }, headEntryOptions);
 		ssrContext.head.push({ link: getPrefetchLinks(ssrContext, renderer.rendererContext) }, headEntryOptions);
 		// 5. Payloads
