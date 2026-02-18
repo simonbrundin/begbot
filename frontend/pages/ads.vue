@@ -68,6 +68,17 @@ watch(activeTab, () => {
 
 const selectedIndex = computed(() => vimNav.selectedIndex.value);
 
+watch(selectedIndex, (index) => {
+  if (index === null) return;
+  setTimeout(() => {
+    const elements = document.querySelectorAll('.card');
+    const selectedEl = elements[index] as HTMLElement;
+    if (selectedEl) {
+      selectedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, 0);
+});
+
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown);
 });
@@ -81,11 +92,21 @@ const handleKeydown = (e: KeyboardEvent) => {
     return;
   }
 
-  if (e.key === 'j' || e.key === 'k' || e.key === 'Escape') {
-    if (!isVimNavigationFocused.value && document.activeElement === document.body) {
+  if (e.key === 'j' || e.key === 'k') {
+    if (!isVimNavigationFocused.value) {
       isVimNavigationFocused.value = true;
       vimNav.setFocused(true);
     }
+  }
+
+  if (e.key === 'Escape') {
+    if (isVimNavigationFocused.value) {
+      e.preventDefault();
+      vimNav.clearSelection();
+      isVimNavigationFocused.value = false;
+      vimNav.setFocused(false);
+    }
+    return;
   }
 
   if (!isVimNavigationFocused.value) return;
@@ -96,11 +117,6 @@ const handleKeydown = (e: KeyboardEvent) => {
   } else if (e.key === 'k') {
     e.preventDefault();
     vimNav.moveUp();
-  } else if (e.key === 'Escape') {
-    e.preventDefault();
-    vimNav.clearSelection();
-    isVimNavigationFocused.value = false;
-    vimNav.setFocused(false);
   }
 };
 
