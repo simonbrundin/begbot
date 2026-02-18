@@ -186,6 +186,31 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
 		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
+		`CREATE TABLE IF NOT EXISTS conversations (
+			id SERIAL PRIMARY KEY,
+			listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+			marketplace_id SMALLINT NOT NULL REFERENCES marketplaces(id),
+			status TEXT DEFAULT 'active',
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_listing_id ON conversations(listing_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_marketplace_id ON conversations(marketplace_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status)`,
+		`CREATE TABLE IF NOT EXISTS messages (
+			id SERIAL PRIMARY KEY,
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+			direction TEXT NOT NULL,
+			content TEXT NOT NULL,
+			status TEXT DEFAULT 'pending',
+			approved_at TIMESTAMPTZ,
+			sent_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)`,
 	}
 
 	for i, query := range queries {
@@ -940,4 +965,218 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProf
 		result = append(result, listingWithP)
 	}
 	return result, nil
+}
+
+// Conversation methods
+func (p *Postgres) CreateConversation(ctx context.Context, conv *models.Conversation) error {
+	query := `
+		INSERT INTO conversations (listing_id, marketplace_id, status)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at
+	`
+	return p.db.QueryRowContext(ctx, query, conv.ListingID, conv.MarketplaceID, conv.Status).
+		Scan(&conv.ID, &conv.CreatedAt, &conv.UpdatedAt)
+}
+
+func (p *Postgres) GetConversationByID(ctx context.Context, id int64) (*models.Conversation, error) {
+	query := `
+		SELECT id, listing_id, marketplace_id, status, created_at, updated_at
+		FROM conversations
+		WHERE id = $1
+	`
+	var conv models.Conversation
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&conv.ID, &conv.ListingID, &conv.MarketplaceID, &conv.Status,
+		&conv.CreatedAt, &conv.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &conv, nil
+}
+
+func (p *Postgres) GetConversationByListingID(ctx context.Context, listingID int64) (*models.Conversation, error) {
+	query := `
+		SELECT id, listing_id, marketplace_id, status, created_at, updated_at
+		FROM conversations
+		WHERE listing_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+	var conv models.Conversation
+	err := p.db.QueryRowContext(ctx, query, listingID).Scan(
+		&conv.ID, &conv.ListingID, &conv.MarketplaceID, &conv.Status,
+		&conv.CreatedAt, &conv.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &conv, nil
+}
+
+func (p *Postgres) GetConversationsNeedingReview(ctx context.Context) ([]models.ConversationWithDetails, error) {
+	query := `
+		SELECT DISTINCT
+			c.id, c.listing_id, c.marketplace_id, c.status, c.created_at, c.updated_at,
+			l.title, l.price, m.name,
+			(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND status = 'pending') as pending_count
+		FROM conversations c
+		JOIN listings l ON c.listing_id = l.id
+		JOIN marketplaces m ON c.marketplace_id = m.id
+		WHERE EXISTS (
+			SELECT 1 FROM messages
+			WHERE conversation_id = c.id AND status = 'pending'
+		)
+		ORDER BY c.updated_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var conversations []models.ConversationWithDetails
+	for rows.Next() {
+		var conv models.ConversationWithDetails
+		err := rows.Scan(
+			&conv.ID, &conv.ListingID, &conv.MarketplaceID, &conv.Status,
+			&conv.CreatedAt, &conv.UpdatedAt,
+			&conv.ListingTitle, &conv.ListingPrice, &conv.MarketplaceName,
+			&conv.PendingCount,
+		)
+		if err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, conv)
+	}
+	return conversations, rows.Err()
+}
+
+func (p *Postgres) GetAllConversations(ctx context.Context) ([]models.ConversationWithDetails, error) {
+	query := `
+		SELECT
+			c.id, c.listing_id, c.marketplace_id, c.status, c.created_at, c.updated_at,
+			l.title, l.price, m.name,
+			(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND status = 'pending') as pending_count
+		FROM conversations c
+		JOIN listings l ON c.listing_id = l.id
+		JOIN marketplaces m ON c.marketplace_id = m.id
+		ORDER BY c.updated_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var conversations []models.ConversationWithDetails
+	for rows.Next() {
+		var conv models.ConversationWithDetails
+		err := rows.Scan(
+			&conv.ID, &conv.ListingID, &conv.MarketplaceID, &conv.Status,
+			&conv.CreatedAt, &conv.UpdatedAt,
+			&conv.ListingTitle, &conv.ListingPrice, &conv.MarketplaceName,
+			&conv.PendingCount,
+		)
+		if err != nil {
+			return nil, err
+		}
+		conversations = append(conversations, conv)
+	}
+	return conversations, rows.Err()
+}
+
+func (p *Postgres) UpdateConversationStatus(ctx context.Context, id int64, status string) error {
+	query := `UPDATE conversations SET status = $1, updated_at = NOW() WHERE id = $2`
+	_, err := p.db.ExecContext(ctx, query, status, id)
+	return err
+}
+
+// Message methods
+func (p *Postgres) CreateMessage(ctx context.Context, msg *models.Message) error {
+	query := `
+		INSERT INTO messages (conversation_id, direction, content, status)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at
+	`
+	return p.db.QueryRowContext(ctx, query, msg.ConversationID, msg.Direction, msg.Content, msg.Status).
+		Scan(&msg.ID, &msg.CreatedAt, &msg.UpdatedAt)
+}
+
+func (p *Postgres) GetMessageByID(ctx context.Context, id int64) (*models.Message, error) {
+	query := `
+		SELECT id, conversation_id, direction, content, status, approved_at, sent_at, created_at, updated_at
+		FROM messages
+		WHERE id = $1
+	`
+	var msg models.Message
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&msg.ID, &msg.ConversationID, &msg.Direction, &msg.Content, &msg.Status,
+		&msg.ApprovedAt, &msg.SentAt, &msg.CreatedAt, &msg.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
+func (p *Postgres) GetMessagesByConversationID(ctx context.Context, conversationID int64) ([]models.Message, error) {
+	query := `
+		SELECT id, conversation_id, direction, content, status, approved_at, sent_at, created_at, updated_at
+		FROM messages
+		WHERE conversation_id = $1
+		ORDER BY created_at ASC
+	`
+	rows, err := p.db.QueryContext(ctx, query, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []models.Message
+	for rows.Next() {
+		var msg models.Message
+		err := rows.Scan(
+			&msg.ID, &msg.ConversationID, &msg.Direction, &msg.Content, &msg.Status,
+			&msg.ApprovedAt, &msg.SentAt, &msg.CreatedAt, &msg.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
+}
+
+func (p *Postgres) ApproveMessage(ctx context.Context, id int64) error {
+	query := `UPDATE messages SET status = 'approved', approved_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (p *Postgres) RejectMessage(ctx context.Context, id int64) error {
+	query := `UPDATE messages SET status = 'rejected', updated_at = NOW() WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (p *Postgres) MarkMessageAsSent(ctx context.Context, id int64) error {
+	query := `UPDATE messages SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (p *Postgres) UpdateMessageContent(ctx context.Context, id int64, content string) error {
+	query := `UPDATE messages SET content = $1, updated_at = NOW() WHERE id = $2`
+	_, err := p.db.ExecContext(ctx, query, content, id)
+	return err
 }
