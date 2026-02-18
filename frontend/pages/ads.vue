@@ -1,46 +1,117 @@
 <script setup lang="ts">
 import type { ListingWithDetails } from "~/types/database";
+import { createVimNavigation } from "~/composables/useVimNavigation";
 
-const config = useRuntimeConfig();
+const api = useApi();
 
-const {
-  data: listings,
-  error,
-  pending,
-} = await useAsyncData("ads-listings", async () => {
+const listings = ref<ListingWithDetails[]>([]);
+const potentialListings = ref<ListingWithDetails[]>([]);
+const activeTab = ref<'all' | 'good-value'>('all');
+const error = ref<Error | null>(null);
+
+const filteredListings = computed(() => {
+  if (activeTab.value === 'good-value') {
+    return potentialListings.value;
+  }
+  return listings.value;
+});
+
+const vimNav = createVimNavigation(0);
+
+const isVimNavigationFocused = ref(false);
+
+const fetchListings = async () => {
   try {
-    const response = await fetch(`${config.public.apiBase}/api/listings`);
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
+    const data = await api.get<ListingWithDetails[]>("/listings");
 
     if (!data || !Array.isArray(data)) {
       throw new Error("Invalid response from API");
     }
 
-     return data.filter(
-       (item: any) => item.Listing && !item.Listing.is_my_listing
-     );
+    listings.value = data.filter(
+      (item) => item.Listing && !item.Listing.is_my_listing
+    );
+    vimNav.setItemCount(filteredListings.value.length);
   } catch (e: any) {
     console.error("Failed to fetch listings:", e);
-    throw new Error(e.message || "Kunde inte hämta annonser");
+    error.value = new Error(e.message || "Kunde inte hämta annonser");
   }
+};
+
+const fetchPotentialListings = async () => {
+  try {
+    const data = await api.get<ListingWithDetails[]>("/listings?good-value=true");
+
+    if (!data || !Array.isArray(data)) {
+      throw new Error("Invalid response from API");
+    }
+
+    potentialListings.value = data.filter(
+      (item) => item.Listing && !item.Listing.is_my_listing
+    );
+    vimNav.setItemCount(filteredListings.value.length);
+  } catch (e: any) {
+    console.error("Failed to fetch potential listings:", e);
+  }
+};
+
+await Promise.all([fetchListings(), fetchPotentialListings()]);
+
+watch(filteredListings, (newList) => {
+  vimNav.setItemCount(newList.length);
 });
 
-const formatCurrency = (price: number | null) => {
-  if (!price) return "-";
-  return `${price.toLocaleString("sv-SE")} kr`;
+watch(activeTab, () => {
+  vimNav.setItemCount(filteredListings.value.length);
+  vimNav.clearSelection();
+});
+
+const selectedIndex = computed(() => vimNav.selectedIndex.value);
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
+});
+
+const handleKeydown = (e: KeyboardEvent) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+
+  if (e.key === 'j' || e.key === 'k' || e.key === 'Escape') {
+    if (!isVimNavigationFocused.value && document.activeElement === document.body) {
+      isVimNavigationFocused.value = true;
+      vimNav.setFocused(true);
+    }
+  }
+
+  if (!isVimNavigationFocused.value) return;
+
+  if (e.key === 'j') {
+    e.preventDefault();
+    vimNav.moveDown();
+  } else if (e.key === 'k') {
+    e.preventDefault();
+    vimNav.moveUp();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    vimNav.clearSelection();
+    isVimNavigationFocused.value = false;
+    vimNav.setFocused(false);
+  }
 };
+
+const isSelected = (index: number) => selectedIndex.value === index;
 
 const formatPriceAsSEK = (price: number | null) => {
   if (!price) return "-";
   return `${price.toLocaleString("sv-SE")} kr`;
 };
 
-const formatValuationAsSEK = (sek: number | null) => {
+const formatValuationAsSEK = (sek: number | null | undefined) => {
   if (!sek) return "-";
   return `${sek.toLocaleString("sv-SE")} kr`;
 };
@@ -71,20 +142,38 @@ const errorMessage = computed(() => {
       <h1 class="page-header">Hittade annonser</h1>
     </div>
 
-    <div v-if="errorMessage" class="text-center py-12 text-red-400">
-      {{ errorMessage }}
+    <div class="flex gap-2 mb-6">
+      <button
+        @click="activeTab = 'all'"
+        class="px-4 py-2 rounded-lg transition-colors"
+        :class="activeTab === 'all' 
+          ? 'bg-primary-600 text-white' 
+          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'"
+      >
+        Alla
+      </button>
+      <button
+        @click="activeTab = 'good-value'"
+        class="px-4 py-2 rounded-lg transition-colors"
+        :class="activeTab === 'good-value' 
+          ? 'bg-primary-600 text-white' 
+          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'"
+      >
+        Prisvärda
+      </button>
     </div>
 
-    <div v-else-if="pending" class="text-center py-12 text-slate-500">
-      Laddar...
+    <div v-if="errorMessage" class="text-center py-12 text-red-400">
+      {{ errorMessage }}
     </div>
 
     <template v-else>
       <div class="grid grid-cols-1 gap-4">
         <div
-          v-for="item in listings"
+          v-for="(item, index) in filteredListings"
           :key="item.Listing?.id"
-          class="card overflow-hidden"
+          class="card overflow-hidden transition-all"
+          :class="{ 'ring-2 ring-primary-500 ring-offset-2 ring-offset-slate-800': isSelected(index) }"
         >
           <div class="p-4">
             <div
@@ -123,7 +212,7 @@ const errorMessage = computed(() => {
                   {{
                     item.Listing.shipping_cost !== null &&
                     item.Listing.shipping_cost !== undefined
-                      ? formatCurrency(item.Listing.shipping_cost)
+                      ? formatPriceAsSEK(item.Listing.shipping_cost)
                       : "Okänt"
                   }}
                 </p>
@@ -194,10 +283,10 @@ const errorMessage = computed(() => {
       </div>
 
       <div
-        v-if="listings?.length === 0"
+        v-if="filteredListings?.length === 0"
         class="text-center py-12 text-slate-500"
       >
-        Inga annonser hittades.
+        {{ activeTab === 'good-value' ? 'Inga prisvärda annonser hittades.' : 'Inga annonser hittades.' }}
       </div>
     </template>
   </div>
