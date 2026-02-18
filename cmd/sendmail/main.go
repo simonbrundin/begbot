@@ -1,17 +1,25 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"begbot/internal/config"
 	"begbot/internal/services"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	godotenv.Load()
+
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		panic(err)
 	}
+
+	fmt.Printf("Config SMTP: host=%s, port=%s, user=%s, from=%s\n",
+		cfg.Email.SMTPHost, cfg.Email.SMTPPort, cfg.Email.SMTPUsername, cfg.Email.From)
+	fmt.Printf("Recipients: %v\n", cfg.Email.Recipients)
 
 	if len(os.Args) < 2 {
 		panic("Subject argument is required")
@@ -31,4 +39,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	fmt.Println("Mail sent successfully!")
 }

@@ -33,7 +33,7 @@ let frontend_port = 3000
 
 def kill-dev-ports [] {
     # Kill specific dev processes
-    let patterns = ["go run ./cmd/api/main.go", "npm run dev", "node.*nuxt", "node.*vite"]
+    let patterns = ["air", "go run ./cmd/api/main.go", "npm run dev", "node.*nuxt", "node.*vite", "/tmp/begbot"]
     
     for $pattern in $patterns {
         try {
@@ -129,7 +129,7 @@ mut actual_frontend_url = $frontend_url
 if $mode == "all" or $mode == "backend" {
     print $"🔧 Startar Go backend på port ($backend_port)..."
     cd /home/simon/repos/begbot
-    ^bash -c "go run ./cmd/api/main.go > /dev/null 2>&1 &"
+    ^bash -c "/home/simon/go/bin/air > /dev/null 2>&1 &"
     print $"✓ Backend startad: ($backend_url)"
 }
 
@@ -183,4 +183,4 @@ try {
 print "\n✅ Utvecklingsservrar körs!"
 print $"   Backend: ($backend_url)"
 print $"   Frontend: ($final_frontend_url)"
-print "\nFör att stoppa: pkill -9 -f 'go run ./cmd/api/main.go' && pkill -9 -f 'npm run dev'"
+print "\nFör att stoppa: pkill -9 -f 'air' && pkill -9 -f 'npm run dev'"

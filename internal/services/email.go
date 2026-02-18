@@ -27,7 +27,7 @@ func LoadEmailHTML(fileName string) (string, error) {
 }
 
 func SendEmail(config EmailConfig, to []string, subject, htmlContent string) error {
-	auth := smtp.PlainAuth("", config.SMTPUsername, config.SMTPPassword, config.SMTPHost)
+	auth := smtp.PlainAuth("", config.SMTPUsername, strings.ReplaceAll(config.SMTPPassword, " ", ""), config.SMTPHost)
 
 	msg := "To: " + strings.Join(to, ",") + "\r\n"
 	msg += "From: " + config.From + "\r\n"

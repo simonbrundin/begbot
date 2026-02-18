@@ -19,7 +19,8 @@ export const useApi = () => {
     try {
       const result = await $fetch<T>(url, {
         method: options?.method || 'GET',
-        body: options?.body
+        body: options?.body,
+        responseType: 'json'
       })
       return result
     } finally {

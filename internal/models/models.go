@@ -6,16 +6,16 @@ import (
 )
 
 type Product struct {
-	ID                int64     `json:"id" db:"id"`
-	Brand             string    `json:"brand" db:"brand"`
-	Name              string    `json:"name" db:"name"`
-	Category          string    `json:"category" db:"category"`
-	ModelVariant      *string   `json:"model_variant,omitempty" db:"model_variant"`
-	SellPackagingCost int       `json:"sell_packaging_cost" db:"sell_packaging_cost"`
-	SellPostageCost   int       `json:"sell_postage_cost" db:"sell_postage_cost"`
-	NewPrice          *int      `json:"new_price,omitempty" db:"new_price"`
-	Enabled           bool      `json:"enabled" db:"enabled"`
-	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+	ID                int64      `json:"id" db:"id"`
+	Brand             *string    `json:"brand,omitempty" db:"brand"`
+	Name              *string    `json:"name,omitempty" db:"name"`
+	Category          *string    `json:"category,omitempty" db:"category"`
+	ModelVariant      *string    `json:"model_variant,omitempty" db:"model_variant"`
+	SellPackagingCost int        `json:"sell_packaging_cost" db:"sell_packaging_cost"`
+	SellPostageCost   int        `json:"sell_postage_cost" db:"sell_postage_cost"`
+	NewPrice          *int       `json:"new_price,omitempty" db:"new_price"`
+	Enabled           *bool      `json:"enabled,omitempty" db:"enabled"`
+	CreatedAt         *time.Time `json:"created_at,omitempty" db:"created_at"`
 }
 
 type TradedItem struct {
@@ -123,6 +123,16 @@ type SearchTerm struct {
 	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
 }
 
+type CronJob struct {
+	ID             int64     `json:"id" db:"id"`
+	Name           string    `json:"name" db:"name"`
+	CronExpression string    `json:"cron_expression" db:"cron_expression"`
+	SearchTermIDs  []int64   `json:"search_term_ids" db:"search_term_ids"`
+	IsActive       bool      `json:"is_active" db:"is_active"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
+}
+
 type SearchCriteria struct {
 	ID            int64     `json:"id" db:"id"`
 	SearchTermID  int64     `json:"search_term_id" db:"search_term_id"`
@@ -168,4 +178,16 @@ type SearchHistory struct {
 	MarketplaceName string    `json:"marketplace_name" db:"marketplace_name"`
 	SearchedAt      time.Time `json:"searched_at" db:"searched_at"`
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+}
+
+type ScrapingRun struct {
+	ID                 int64      `json:"id" db:"id"`
+	StartedAt          time.Time  `json:"started_at" db:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty" db:"completed_at"`
+	Status             string     `json:"status" db:"status"`
+	TotalAdsFound      int        `json:"total_ads_found" db:"total_ads_found"`
+	TotalListingsSaved int        `json:"total_listings_saved" db:"total_listings_saved"`
+	TotalGoodBuys      int        `json:"total_good_buys" db:"total_good_buys"`
+	ErrorMessage       *string    `json:"error_message,omitempty" db:"error_message"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 }

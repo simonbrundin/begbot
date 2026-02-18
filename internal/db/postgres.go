@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"time"
 
 	"begbot/internal/config"
@@ -13,6 +14,28 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func parseIntegerArray(raw interface{}) []int64 {
+	if raw == nil {
+		return nil
+	}
+	str, ok := raw.(string)
+	if !ok {
+		return nil
+	}
+	if str == "{}" || str == "" {
+		return []int64{}
+	}
+	re := regexp.MustCompile(`\d+`)
+	matches := re.FindAllString(str, -1)
+	var result []int64
+	for _, m := range matches {
+		var n int64
+		fmt.Sscanf(m, "%d", &n)
+		result = append(result, n)
+	}
+	return result
+}
 
 type Postgres struct {
 	db *sql.DB
@@ -212,6 +235,16 @@ func (p *Postgres) Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_started_at ON scraping_runs(started_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_status ON scraping_runs(status)`,
+		`CREATE TABLE IF NOT EXISTS cron_jobs (
+			id SERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			cron_expression TEXT NOT NULL,
+			search_term_ids INTEGER[],
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_is_active ON cron_jobs(is_active)`,
 	}
 
 	for i, query := range queries {
@@ -618,6 +651,75 @@ func (p *Postgres) UpdateSearchTermStatus(ctx context.Context, id int64, isActiv
 
 func (p *Postgres) DeleteSearchTerm(ctx context.Context, id int64) error {
 	query := `DELETE FROM search_terms WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (p *Postgres) CreateCronJob(ctx context.Context, job *models.CronJob) error {
+	query := `
+		INSERT INTO cron_jobs (name, cron_expression, search_term_ids, is_active)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at
+	`
+	return p.db.QueryRowContext(ctx, query, job.Name, job.CronExpression, job.SearchTermIDs, job.IsActive).Scan(&job.ID, &job.CreatedAt, &job.UpdatedAt)
+}
+
+func (p *Postgres) GetAllCronJobs(ctx context.Context) ([]models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []models.CronJob
+	for rows.Next() {
+		var job models.CronJob
+		var searchTermIDsRaw interface{}
+		if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+		jobs = append(jobs, job)
+	}
+	if jobs == nil {
+		jobs = []models.CronJob{}
+	}
+	return jobs, rows.Err()
+}
+
+func (p *Postgres) GetCronJobByID(ctx context.Context, id int64) (*models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs WHERE id = $1
+	`
+	var job models.CronJob
+	var searchTermIDsRaw interface{}
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+	return &job, nil
+}
+
+func (p *Postgres) UpdateCronJob(ctx context.Context, job *models.CronJob) error {
+	query := `UPDATE cron_jobs SET name = $1, cron_expression = $2, search_term_ids = $3, is_active = $4, updated_at = NOW() WHERE id = $5`
+	_, err := p.db.ExecContext(ctx, query, job.Name, job.CronExpression, job.SearchTermIDs, job.IsActive, job.ID)
+	return err
+}
+
+func (p *Postgres) DeleteCronJob(ctx context.Context, id int64) error {
+	query := `DELETE FROM cron_jobs WHERE id = $1`
 	_, err := p.db.ExecContext(ctx, query, id)
 	return err
 }

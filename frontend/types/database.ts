@@ -6,8 +6,9 @@ export interface Product {
   model_variant: string | null
   sell_packaging_cost: number
   sell_postage_cost: number
-  enabled: boolean
-  created_at: string
+  new_price?: number | null
+  enabled?: boolean | null
+  created_at?: string | null
 }
 
 export interface TradedItem {
@@ -121,6 +122,18 @@ export interface SearchHistory {
   marketplace_id: number | null
   marketplace_name: string
   searched_at: string
+  created_at: string
+}
+
+export interface ScrapingRun {
+  id: number
+  started_at: string
+  completed_at: string | null
+  status: string
+  total_ads_found: number
+  total_listings_saved: number
+  total_good_buys: number
+  error_message: string | null
   created_at: string
 }
 

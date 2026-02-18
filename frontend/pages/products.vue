@@ -29,9 +29,9 @@
             <td>
               <button
                 @click="toggleEnabled(product)"
-                :class="product.enabled ? 'badge badge-success' : 'badge'"
+                :class="product.enabled === true ? 'badge badge-success' : 'badge'"
               >
-                {{ product.enabled ? 'Ja' : 'Nej' }}
+                {{ product.enabled === true ? 'Ja' : 'Nej' }}
               </button>
             </td>
             <td class="text-sm text-slate-400">{{ formatDate(product.created_at) }}</td>
@@ -126,7 +126,14 @@ const fetchData = async () => {
   }
 }
 
-const formatDate = (dateStr: string) => new Date(dateStr).toLocaleDateString('sv-SE')
+const formatDate = (dateStr?: string | null) => {
+  if (!dateStr || dateStr === 'null') return '-'
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return '-'
+  return date.toLocaleDateString('sv-SE')
+}
+
+const formatEnabled = (enabled: boolean) => enabled ? 'Ja' : 'Nej'
 
 const editProduct = (product: Product) => {
   editingProduct.value = product
@@ -137,7 +144,7 @@ const editProduct = (product: Product) => {
     model_variant: product.model_variant || '',
     sell_packaging_cost: product.sell_packaging_cost,
     sell_postage_cost: product.sell_postage_cost,
-    enabled: product.enabled
+    enabled: product.enabled ?? false
   }
 }
 

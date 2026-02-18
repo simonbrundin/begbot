@@ -42,5 +42,5 @@ email:
   smtp_password: "" # Set via SMTP_PASSWORD env var
   from: "" # Set via SMTP_FROM env var
   recipients:
-    - "SMTP_FROM"
+    - "simonbrundin@gmail.com"
     # - "freddie_tour@hotmail.com"
