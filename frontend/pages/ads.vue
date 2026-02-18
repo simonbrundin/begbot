@@ -68,6 +68,33 @@ watch(activeTab, () => {
 
 const selectedIndex = computed(() => vimNav.selectedIndex.value);
 
+const selectedListing = computed(() => {
+  if (selectedIndex.value === null || selectedIndex.value === -1) return null;
+  return filteredListings.value[selectedIndex.value];
+});
+
+const removeListingFromState = (listingId: number) => {
+  listings.value = listings.value.filter(l => l.Listing?.id !== listingId);
+  potentialListings.value = potentialListings.value.filter(l => l.Listing?.id !== listingId);
+};
+
+const clearSelection = () => {
+  vimNav.clearSelection();
+  isVimNavigationFocused.value = false;
+  vimNav.setFocused(false);
+};
+
+const deleteListing = async (listingId: number) => {
+  try {
+    await api.delete(`/listings/${listingId}`);
+    removeListingFromState(listingId);
+    clearSelection();
+  } catch (e: any) {
+    console.error("Failed to delete listing:", e);
+    error.value = new Error(e.message || "Kunde inte ta bort annons");
+  }
+};
+
 watch(selectedIndex, (index) => {
   if (index === null) return;
   setTimeout(() => {
@@ -117,6 +144,14 @@ const handleKeydown = (e: KeyboardEvent) => {
   } else if (e.key === 'k') {
     e.preventDefault();
     vimNav.moveUp();
+  } else if (e.key === 'd') {
+    e.preventDefault();
+    const listing = selectedListing.value;
+    if (!listing?.Listing?.id) return;
+    
+    if (confirm(`Ta bort "${listing.Listing.title || 'denna annons'}"?`)) {
+      deleteListing(listing.Listing.id);
+    }
   }
 };
 

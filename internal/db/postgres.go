@@ -200,6 +200,18 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
 		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
+		`CREATE TABLE IF NOT EXISTS scraping_runs (
+			id SERIAL PRIMARY KEY,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			completed_at TIMESTAMPTZ,
+			status VARCHAR(20) NOT NULL DEFAULT 'running',
+			total_ads_found INTEGER DEFAULT 0,
+			total_listings_saved INTEGER DEFAULT 0,
+			error_message TEXT,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_started_at ON scraping_runs(started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_status ON scraping_runs(status)`,
 	}
 
 	for i, query := range queries {
@@ -353,6 +365,21 @@ func (p *Postgres) UpdateListingStatus(ctx context.Context, id int64, status str
 	return err
 }
 
+func (p *Postgres) DeleteListing(ctx context.Context, id int64) error {
+	result, err := p.db.ExecContext(ctx, `DELETE FROM listings WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (*models.Listing, error) {
 	query := `
 		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
@@ -458,13 +485,12 @@ func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category
 	}
 
 	newProduct := models.Product{
-		Brand:             brand,
-		Name:              name,
-		Category:          category,
+		Brand:             &brand,
+		Name:              &name,
+		Category:          &category,
 		ModelVariant:      modelVariant,
 		SellPackagingCost: packagingCost,
 		SellPostageCost:   postageCost,
-		Enabled:           false,
 	}
 	if err := p.SaveProduct(ctx, &newProduct); err != nil {
 		return nil, err
@@ -935,6 +961,7 @@ func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, erro
 	var rules models.Economics
 	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount)
 	if err == sql.ErrNoRows {
+		fmt.Println("GetTradingRules: No rules found in database, using defaults")
 		return &models.Economics{
 			MinProfitSEK: intPtr(0),
 			MinDiscount:  intPtr(0),
@@ -943,6 +970,7 @@ func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, erro
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount)
 	return &rules, nil
 }
 
@@ -998,4 +1026,121 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProf
 		result = append(result, listingWithP)
 	}
 	return result, nil
+}
+
+func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfit, error) {
+	listings, err := p.GetAllListings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ListingWithProfit, 0, len(listings))
+
+	rules, err := p.GetTradingRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	minProfit := 0
+	if rules.MinProfitSEK != nil {
+		minProfit = *rules.MinProfitSEK
+	}
+	minDiscount := 0
+	if rules.MinDiscount != nil {
+		minDiscount = *rules.MinDiscount
+	}
+	_ = minProfit
+	_ = minDiscount
+
+	for _, l := range listings {
+		listingWithP := ListingWithProfit{Listing: l}
+
+		if l.Price != nil && l.Valuation > 0 {
+			shippingCost := 0
+			if l.ShippingCost != nil {
+				shippingCost = *l.ShippingCost
+			}
+			profit := l.Valuation - *l.Price - shippingCost
+			discountPercent := float64(profit) / float64(l.Valuation) * 100
+
+			if profit >= minProfit && discountPercent >= float64(minDiscount) {
+				listingWithP.PotentialProfit = profit
+				listingWithP.DiscountPercent = discountPercent
+				fmt.Printf("Listing %d passes: profit=%d, discount=%.1f%%\n", l.ID, profit, discountPercent)
+			} else {
+				continue
+			}
+		} else {
+			continue
+		}
+
+		if l.ProductID != nil {
+			vals, err := p.GetValuationsForListing(ctx, l.ID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Valuations = vals
+
+			product, err := p.GetProductByID(ctx, *l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Product = product
+		}
+		result = append(result, listingWithP)
+	}
+	return result, nil
+}
+
+func (p *Postgres) SaveScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
+	query := `
+		INSERT INTO scraping_runs (started_at, completed_at, status, total_ads_found, total_listings_saved, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at
+	`
+	return p.db.QueryRowContext(ctx, query,
+		run.StartedAt, run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage,
+	).Scan(&run.ID, &run.CreatedAt)
+}
+
+func (p *Postgres) UpdateScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
+	query := `
+		UPDATE scraping_runs 
+		SET completed_at = $1, status = $2, total_ads_found = $3, total_listings_saved = $4, error_message = $5
+		WHERE id = $6
+	`
+	_, err := p.db.ExecContext(ctx, query,
+		run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage, run.ID,
+	)
+	return err
+}
+
+func (p *Postgres) GetScrapingRuns(ctx context.Context, limit, offset int) ([]models.ScrapingRun, error) {
+	query := `
+		SELECT id, started_at, completed_at, status, total_ads_found, total_listings_saved, total_good_buys, error_message, created_at
+		FROM scraping_runs
+		ORDER BY started_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := p.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []models.ScrapingRun
+	for rows.Next() {
+		var run models.ScrapingRun
+		if err := rows.Scan(&run.ID, &run.StartedAt, &run.CompletedAt, &run.Status, &run.TotalAdsFound, &run.TotalListingsSaved, &run.TotalGoodBuys, &run.ErrorMessage, &run.CreatedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (p *Postgres) GetScrapingRunsCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM scraping_runs`
+	var count int
+	err := p.db.QueryRowContext(ctx, query).Scan(&count)
+	return count, err
 }
