@@ -9,14 +9,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BIN=./api-new
+BIN=./api
 BUILD_TARGET=./cmd/api
 LOG=fetch.log
 
 echo "Stopping existing API processes (if any)..."
-pkill -f "\./api-new" || true
-pkill -f "\./tmp" || true
-pkill -f "\./api " || true
+pkill -f "\\./api-new" || true
+pkill -f "\\./tmp" || true
+pkill -f "\\./api" || true
 
 sleep 1
 
@@ -25,11 +25,15 @@ go build -o "$BIN" "$BUILD_TARGET"
 
 chmod +x "$BIN"
 
+
 echo "Starting $BIN (logging -> $LOG)"
 nohup "$BIN" > "$LOG" 2>&1 &
 PID=$!
 
 echo $PID > /tmp/begbot_api.pid
 echo "Started $BIN with PID $PID"
+
+# cleanup old build artifacts
+rm -f ./tmp ./api-new || true
 
 exit 0
