@@ -84,6 +84,14 @@
           <Icon name="lucide:megaphone" />
           <span>Hittade annonser</span>
         </NuxtLink>
+        <NuxtLink
+          to="/settings"
+          class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white"
+          active-class="bg-slate-700 text-white"
+        >
+          <Icon name="lucide:settings" />
+          <span>Inställningar</span>
+        </NuxtLink>
       </nav>
     </aside>
     <main class="ml-64 p-8 min-h-screen overflow-x-hidden">

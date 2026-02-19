@@ -1,3 +1,6 @@
+//go:build gherkin
+// +build gherkin
+
 package gherkin
 
 import (

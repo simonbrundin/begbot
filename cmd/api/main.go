@@ -103,6 +103,7 @@ func main() {
 	mux.HandleFunc("/api/valuations", server.valuationsHandler)
 	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
 	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
+	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
 
 	headers := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +414,48 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(product)
 	case "DELETE":
 		w.WriteHeader(204)
+	}
+}
+
+func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		rules, err := s.db.GetTradingRules(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, rules)
+		return
+	case "PUT", "POST":
+		var payload models.Economics
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		// Basic validation: non-negative values
+		if payload.MinProfitSEK != nil && *payload.MinProfitSEK < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_profit_sek", Message: "must be non-negative"}})
+			return
+		}
+		if payload.MinDiscount != nil && *payload.MinDiscount < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_discount", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveTradingRules(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		// Return current rules from DB
+		rules, err := s.db.GetTradingRules(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, rules)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 	}
 }
 

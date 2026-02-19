@@ -1131,6 +1131,35 @@ func intPtr(i int) *int {
 	return &i
 }
 
+func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics) error {
+	var minProfit interface{} = nil
+	var minDiscount interface{} = nil
+	if rules.MinProfitSEK != nil {
+		minProfit = *rules.MinProfitSEK
+	}
+	if rules.MinDiscount != nil {
+		minDiscount = *rules.MinDiscount
+	}
+
+	// Try update first
+	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2`, minProfit, minDiscount)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+
+	// No rows updated -> insert a new row
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount) VALUES ($1, $2) RETURNING id`, minProfit, minDiscount).Scan(&id)
+	if err != nil {
+		return err
+	}
+	rules.ID = id
+	return nil
+}
+
 type ListingWithProfit struct {
 	Listing         models.Listing
 	Product         *models.Product

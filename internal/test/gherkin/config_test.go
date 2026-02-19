@@ -1,6 +1,11 @@
+//go:build gherkin
+// +build gherkin
+
 package gherkin
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,7 +40,11 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	// LLM with models
 	ctx.Given("a config file with provider {string}", func(sc *godog.Step, provider string) error {
-		tc.tmpDir = t.TempDir()
+		d, err := os.MkdirTemp("", "cfgtest")
+		if err != nil {
+			return err
+		}
+		tc.tmpDir = d
 		tc.configPath = filepath.Join(tc.tmpDir, "config.yaml")
 		return writeTestConfig(tc.configPath, "provider: "+provider+"\n")
 	})
@@ -72,42 +81,42 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the provider should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.LLM.Provider != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.LLM.Provider)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.LLM.Provider)
 		}
 		return nil
 	})
 
 	ctx.And("the API key should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.LLM.APIKey != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.LLM.APIKey)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.LLM.APIKey)
 		}
 		return nil
 	})
 
 	ctx.And("the site URL should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.LLM.SiteURL != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.LLM.SiteURL)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.LLM.SiteURL)
 		}
 		return nil
 	})
 
 	ctx.And("the site name should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.LLM.SiteName != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.LLM.SiteName)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.LLM.SiteName)
 		}
 		return nil
 	})
 
 	ctx.And("the default model should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.LLM.DefaultModel != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.LLM.DefaultModel)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.LLM.DefaultModel)
 		}
 		return nil
 	})
 
 	ctx.And("there should be {int} models defined", func(sc *godog.Step, expected int) error {
 		if len(tc.cfg.LLM.Models) != expected {
-			return.Errorf("expected %d models, got %d", expected, len(tc.cfg.LLM.Models))
+			return fmt.Errorf("expected %d models, got %d", expected, len(tc.cfg.LLM.Models))
 		}
 		return nil
 	})
@@ -120,7 +129,7 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the models count should be {int}", func(sc *godog.Step, expected int) error {
 		if tc.cfg.LLM.Models != nil && len(tc.cfg.LLM.Models) != expected {
-			return.Errorf("expected %d models, got %d", expected, len(tc.cfg.LLM.Models))
+			return fmt.Errorf("expected %d models, got %d", expected, len(tc.cfg.LLM.Models))
 		}
 		return nil
 	})
@@ -128,7 +137,11 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 	// Database settings
 	ctx.Given("a config file with:", func(sc *godog.Step, table *godog.Table) error {
 		// Would parse table and create config
-		tc.tmpDir = t.TempDir()
+		d, err := os.MkdirTemp("", "cfgtest")
+		if err != nil {
+			return err
+		}
+		tc.tmpDir = d
 		tc.configPath = filepath.Join(tc.tmpDir, "config.yaml")
 		
 		configContent := "database:\n"
@@ -141,14 +154,14 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the database host should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.Database.Host != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.Database.Host)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.Database.Host)
 		}
 		return nil
 	})
 
 	ctx.And("the database port should be {int}", func(sc *godog.Step, expected int) error {
 		if tc.cfg.Database.Port != expected {
-			return.Errorf("expected %d, got %d", expected, tc.cfg.Database.Port)
+			return fmt.Errorf("expected %d, got %d", expected, tc.cfg.Database.Port)
 		}
 		return nil
 	})
@@ -181,21 +194,21 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the target sell days should be {int}", func(sc *godog.Step, expected int) error {
 		if tc.cfg.Valuation.TargetSellDays != expected {
-			return.Errorf("expected %d, got %d", expected, tc.cfg.Valuation.TargetSellDays)
+			return fmt.Errorf("expected %d, got %d", expected, tc.cfg.Valuation.TargetSellDays)
 		}
 		return nil
 	})
 
 	ctx.And("the minimum profit margin should be {float}", func(sc *godog.Step, expected float64) error {
 		if tc.cfg.Valuation.MinProfitMargin != expected {
-			return.Errorf("expected %f, got %f", expected, tc.cfg.Valuation.MinProfitMargin)
+			return fmt.Errorf("expected %f, got %f", expected, tc.cfg.Valuation.MinProfitMargin)
 		}
 		return nil
 	})
 
 	ctx.And("the safety margin should be {float}", func(sc *godog.Step, expected float64) error {
 		if tc.cfg.Valuation.SafetyMargin != expected {
-			return.Errorf("expected %f, got %f", expected, tc.cfg.Valuation.SafetyMargin)
+			return fmt.Errorf("expected %f, got %f", expected, tc.cfg.Valuation.SafetyMargin)
 		}
 		return nil
 	})
@@ -208,14 +221,14 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the SMTP host should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.Email.SMTPHost != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.Email.SMTPHost)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.Email.SMTPHost)
 		}
 		return nil
 	})
 
 	ctx.And("the SMTP port should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.Email.SMTPPort != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.Email.SMTPPort)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.Email.SMTPPort)
 		}
 		return nil
 	})

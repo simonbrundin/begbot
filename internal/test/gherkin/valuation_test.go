@@ -1,3 +1,6 @@
+//go:build gherkin
+// +build gherkin
+
 package gherkin
 
 import (
@@ -5,9 +8,7 @@ import (
 	"errors"
 	"math"
 	"testing"
-	"time"
 
-	"begbot/internal/models"
 	"begbot/internal/services"
 
 	"github.com/cucumber/godog"
