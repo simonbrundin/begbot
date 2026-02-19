@@ -272,6 +272,12 @@ func (p *Postgres) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)`,
+		`CREATE TABLE IF NOT EXISTS product_valuation_type_config (
+			product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			valuation_type_id SMALLINT NOT NULL REFERENCES valuation_types(id) ON DELETE CASCADE,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			PRIMARY KEY (product_id, valuation_type_id)
+		)`,
 	}
 
 	for i, query := range queries {
@@ -929,6 +935,39 @@ func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationTyp
 	return types, rows.Err()
 }
 
+func (p *Postgres) GetProductValuationTypeConfigs(ctx context.Context, productID int64) ([]models.ProductValuationTypeConfig, error) {
+	query := `SELECT product_id, valuation_type_id, is_active FROM product_valuation_type_config WHERE product_id = $1`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []models.ProductValuationTypeConfig
+	for rows.Next() {
+		var c models.ProductValuationTypeConfig
+		if err := rows.Scan(&c.ProductID, &c.ValuationTypeID, &c.IsActive); err != nil {
+			return nil, err
+		}
+		configs = append(configs, c)
+	}
+	return configs, rows.Err()
+}
+
+func (p *Postgres) UpsertProductValuationTypeConfigs(ctx context.Context, productID int64, configs []models.ProductValuationTypeConfig) error {
+	for _, c := range configs {
+		query := `
+			INSERT INTO product_valuation_type_config (product_id, valuation_type_id, is_active)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (product_id, valuation_type_id) DO UPDATE SET is_active = EXCLUDED.is_active
+		`
+		if _, err := p.db.ExecContext(ctx, query, productID, c.ValuationTypeID, c.IsActive); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *Postgres) GetValuationsByProductID(ctx context.Context, productID int64) ([]models.Valuation, error) {
 	query := `
 		SELECT id, product_id, valuation_type_id, valuation, COALESCE(metadata, '{}'::jsonb), created_at
@@ -1142,11 +1181,77 @@ func (p *Postgres) GetListingsWithValuations(ctx context.Context) ([]ListingWith
 }
 
 func (p *Postgres) GetLatestValuationByTypeForProduct(ctx context.Context, productID int64) ([]ValuationWithType, error) {
-	// For now, return an empty slice to avoid duplicate valuations issue
-	// TODO: Fix this properly by either:
-	// 1. Deleting duplicate valuations from database, or
-	// 2. Implementing proper deduplication logic
-	return []ValuationWithType{}, nil
+	query := `
+		SELECT DISTINCT ON (v.valuation_type_id)
+			v.id, v.valuation_type_id, vt.name, v.valuation
+		FROM valuations v
+		JOIN valuation_types vt ON v.valuation_type_id = vt.id
+		WHERE v.product_id = $1 AND v.listing_id IS NULL
+		ORDER BY v.valuation_type_id, v.created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var valuations []ValuationWithType
+	for rows.Next() {
+		var v ValuationWithType
+		if err := rows.Scan(&v.ID, &v.ValuationTypeID, &v.ValuationType, &v.Valuation); err != nil {
+			return nil, err
+		}
+		valuations = append(valuations, v)
+	}
+	return valuations, rows.Err()
+}
+
+func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, productID int64) (int, error) {
+	valuations, err := p.GetLatestValuationByTypeForProduct(ctx, productID)
+	if err != nil {
+		return 0, err
+	}
+	if len(valuations) == 0 {
+		return 0, nil
+	}
+
+	configs, err := p.GetProductValuationTypeConfigs(ctx, productID)
+	if err != nil {
+		return 0, err
+	}
+	activeMap := make(map[int16]bool)
+	for _, c := range configs {
+		activeMap[c.ValuationTypeID] = c.IsActive
+	}
+
+	enabledTypes, err := p.GetValuationTypes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	enabledMap := make(map[int16]bool)
+	for _, t := range enabledTypes {
+		if t.Enabled {
+			enabledMap[t.ID] = true
+		}
+	}
+
+	total := 0
+	count := 0
+	for _, v := range valuations {
+		if !enabledMap[v.ValuationTypeID] {
+			continue
+		}
+		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
+			continue
+		}
+		total += v.Valuation
+		count++
+	}
+
+	if count == 0 {
+		return 0, nil
+	}
+	return total / count, nil
 }
 
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
@@ -1201,11 +1306,12 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 }
 
 type ListingWithProfit struct {
-	Listing         models.Listing
-	Product         *models.Product
-	Valuations      []ValuationWithType
-	PotentialProfit int
-	DiscountPercent float64
+	Listing           models.Listing
+	Product           *models.Product
+	Valuations        []ValuationWithType
+	PotentialProfit   int
+	DiscountPercent   float64
+	ComputedValuation int
 }
 
 func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProfit, error) {
@@ -1219,16 +1325,26 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProf
 	for _, l := range listings {
 		listingWithP := ListingWithProfit{Listing: l}
 
+		computedVal := 0
+		if l.ProductID != nil {
+			var cvErr error
+			computedVal, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
+			if cvErr != nil {
+				log.Printf("GetListingsWithProfit: failed to compute valuation for product %d: %v", *l.ProductID, cvErr)
+			}
+		}
+		listingWithP.ComputedValuation = computedVal
+
 		if l.Price != nil {
 			shippingCost := 0
 			if l.ShippingCost != nil {
 				shippingCost = *l.ShippingCost
 			}
-			profit := l.Valuation - *l.Price - shippingCost
+			profit := computedVal - *l.Price - shippingCost
 			listingWithP.PotentialProfit = profit
 
-			if l.Valuation > 0 {
-				listingWithP.DiscountPercent = float64(profit) / float64(l.Valuation) * 100
+			if computedVal > 0 {
+				listingWithP.DiscountPercent = float64(profit) / float64(computedVal) * 100
 			}
 		}
 
@@ -1276,17 +1392,27 @@ func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfi
 	for _, l := range listings {
 		listingWithP := ListingWithProfit{Listing: l}
 
-		if l.Price != nil && l.Valuation > 0 {
+		computedVal := 0
+		if l.ProductID != nil {
+			var cvErr error
+			computedVal, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
+			if cvErr != nil {
+				log.Printf("GetPotentialListings: failed to compute valuation for product %d: %v", *l.ProductID, cvErr)
+			}
+		}
+
+		if l.Price != nil && computedVal > 0 {
 			shippingCost := 0
 			if l.ShippingCost != nil {
 				shippingCost = *l.ShippingCost
 			}
-			profit := l.Valuation - *l.Price - shippingCost
-			discountPercent := float64(profit) / float64(l.Valuation) * 100
+			profit := computedVal - *l.Price - shippingCost
+			discountPercent := float64(profit) / float64(computedVal) * 100
 
 			if profit >= minProfit && discountPercent >= float64(minDiscount) {
 				listingWithP.PotentialProfit = profit
 				listingWithP.DiscountPercent = discountPercent
+				listingWithP.ComputedValuation = computedVal
 				fmt.Printf("Listing %d passes: profit=%d, discount=%.1f%%\n", l.ID, profit, discountPercent)
 			} else {
 				continue

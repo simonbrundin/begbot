@@ -153,12 +153,19 @@ export interface ValuationType {
   enabled?: boolean | null
 }
 
+export interface ProductValuationTypeConfig {
+  product_id: number
+  valuation_type_id: number
+  is_active: boolean
+}
+
 export interface ListingWithDetails {
   Listing: Listing
   Product: Product | null
   Valuations: Valuation[]
   PotentialProfit?: number
   DiscountPercent?: number
+  ComputedValuation?: number
 }
 
 export const TRADE_STATUSES: Record<number, string> = {
