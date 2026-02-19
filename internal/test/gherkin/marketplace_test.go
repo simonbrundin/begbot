@@ -1,3 +1,6 @@
+//go:build gherkin
+// +build gherkin
+
 package gherkin
 
 import (
@@ -13,14 +16,14 @@ import (
 
 // MarketplaceTestContext holds state for marketplace BDD tests
 type marketplaceTestContext struct {
-	service      *services.MarketplaceService
-	cfg          *config.Config
-	ctx          context.Context
-	adID         int64
-	extractedID  int64
-	details      *services.BlocketAdDetails
-	err          error
-	elapsed      time.Duration
+	service     *services.MarketplaceService
+	cfg         *config.Config
+	ctx         context.Context
+	adID        int64
+	extractedID int64
+	details     *services.BlocketAdDetails
+	err         error
+	elapsed     time.Duration
 }
 
 // InitializeMarketplaceScenario initializes the marketplace test context
@@ -67,7 +70,7 @@ func InitializeMarketplaceScenario(ctx *godog.ScenarioContext) {
 
 	ctx.Then("the ad ID should be {int}", func(sc *godog.Step, expected int64) error {
 		if tc.adID != expected {
-			return.Errorf("expected %d, got %d", expected, tc.adID)
+			return fmt.Errorf("expected %d, got %d", expected, tc.adID)
 		}
 		return nil
 	})
@@ -103,7 +106,7 @@ func InitializeMarketplaceScenario(ctx *godog.ScenarioContext) {
 	ctx.Then("the requests should take at least {int} second", func(sc *godog.Step, seconds int) error {
 		expectedMin := time.Duration(seconds) * time.Second
 		if tc.elapsed < expectedMin {
-			return.Errorf("expected at least %v, got %v", expectedMin, tc.elapsed)
+			return fmt.Errorf("expected at least %v, got %v", expectedMin, tc.elapsed)
 		}
 		return nil
 	})
@@ -153,7 +156,7 @@ func InitializeMarketplaceScenario(ctx *godog.ScenarioContext) {
 			return errors.New("no details returned")
 		}
 		if tc.details.Price <= float64(minPrice) {
-			return.Errorf("price %f is not greater than %d", tc.details.Price, minPrice)
+			return fmt.Errorf("price %f is not greater than %d", tc.details.Price, minPrice)
 		}
 		return nil
 	})

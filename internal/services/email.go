@@ -1,7 +1,9 @@
 package services
 
 import (
+	"bytes"
 	"crypto/tls"
+	"html/template"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -27,7 +29,7 @@ func LoadEmailHTML(fileName string) (string, error) {
 }
 
 func SendEmail(config EmailConfig, to []string, subject, htmlContent string) error {
-	auth := smtp.PlainAuth("", config.SMTPUsername, config.SMTPPassword, config.SMTPHost)
+	auth := smtp.PlainAuth("", config.SMTPUsername, strings.ReplaceAll(config.SMTPPassword, " ", ""), config.SMTPHost)
 
 	msg := "To: " + strings.Join(to, ",") + "\r\n"
 	msg += "From: " + config.From + "\r\n"
@@ -90,10 +92,39 @@ func SendEmail(config EmailConfig, to []string, subject, htmlContent string) err
 }
 
 func SendMailHTML(config EmailConfig, to []string, subject, htmlFileName string) error {
+	// backward-compatible call without data: render template with no data
 	htmlContent, err := LoadEmailHTML(htmlFileName)
 	if err != nil {
 		return err
 	}
 
+	// Try to parse as template and execute with empty data to allow placeholders
+	tmpl, err := template.New("email").Parse(htmlContent)
+	if err == nil {
+		var buf bytes.Buffer
+		_ = tmpl.Execute(&buf, nil)
+		htmlContent = buf.String()
+	}
+
 	return SendEmail(config, to, subject, htmlContent)
+}
+
+// SendMailHTMLWithData renders the given template file with provided data and sends the email.
+func SendMailHTMLWithData(config EmailConfig, to []string, subject, htmlFileName string, data interface{}) error {
+	htmlContent, err := LoadEmailHTML(htmlFileName)
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := template.New("email").Parse(htmlContent)
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return err
+	}
+
+	return SendEmail(config, to, subject, buf.String())
 }

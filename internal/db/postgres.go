@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"time"
 
 	"begbot/internal/config"
@@ -13,6 +14,28 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func parseIntegerArray(raw interface{}) []int64 {
+	if raw == nil {
+		return nil
+	}
+	str, ok := raw.(string)
+	if !ok {
+		return nil
+	}
+	if str == "{}" || str == "" {
+		return []int64{}
+	}
+	re := regexp.MustCompile(`\d+`)
+	matches := re.FindAllString(str, -1)
+	var result []int64
+	for _, m := range matches {
+		var n int64
+		fmt.Sscanf(m, "%d", &n)
+		result = append(result, n)
+	}
+	return result
+}
 
 type Postgres struct {
 	db *sql.DB
@@ -151,6 +174,20 @@ func (p *Postgres) Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_search_terms_marketplace_id ON search_terms(marketplace_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_search_terms_is_active ON search_terms(is_active)`,
+		`CREATE TABLE IF NOT EXISTS search_history (
+			id SERIAL PRIMARY KEY,
+			search_term_id INTEGER REFERENCES search_terms(id),
+			search_term_desc TEXT,
+			url TEXT,
+			results_found INTEGER DEFAULT 0,
+			new_ads_found INTEGER DEFAULT 0,
+			marketplace_id SMALLINT REFERENCES marketplaces(id),
+			marketplace_name TEXT,
+			searched_at TIMESTAMPTZ DEFAULT NOW(),
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_search_history_search_term_id ON search_history(search_term_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_search_history_searched_at ON search_history(searched_at DESC)`,
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS category TEXT`,
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS model_variant TEXT`,
 		`UPDATE products SET category = 'phone' WHERE category IS NULL`,
@@ -164,7 +201,8 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT FALSE`,
 		`CREATE TABLE IF NOT EXISTS valuation_types (
 			id SMALLINT PRIMARY KEY,
-			name TEXT NOT NULL
+			name TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE
 		)`,
 		`CREATE TABLE IF NOT EXISTS valuations (
 			id SERIAL PRIMARY KEY,
@@ -178,14 +216,37 @@ func (p *Postgres) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_valuations_product_id ON valuations(product_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_type_id ON valuations(valuation_type_id)`,
 		`INSERT INTO valuation_types (id, name) VALUES
-			(1, 'Egen databas'),
-			(2, 'Tradera'),
-			(3, 'eBay'),
-			(4, 'Nypris (LLM)')
-		ON CONFLICT (id) DO NOTHING`,
+				(1, 'Egen databas'),
+				(2, 'Tradera'),
+				(3, 'eBay'),
+				(4, 'Nypris (LLM)')
+			ON CONFLICT (id) DO NOTHING`,
+		`ALTER TABLE IF EXISTS valuation_types ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE`,
 		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
 		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
+		`CREATE TABLE IF NOT EXISTS scraping_runs (
+			id SERIAL PRIMARY KEY,
+			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			completed_at TIMESTAMPTZ,
+			status VARCHAR(20) NOT NULL DEFAULT 'running',
+			total_ads_found INTEGER DEFAULT 0,
+			total_listings_saved INTEGER DEFAULT 0,
+			error_message TEXT,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_started_at ON scraping_runs(started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_status ON scraping_runs(status)`,
+		`CREATE TABLE IF NOT EXISTS cron_jobs (
+			id SERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			cron_expression TEXT NOT NULL,
+			search_term_ids INTEGER[],
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_is_active ON cron_jobs(is_active)`,
 		`CREATE TABLE IF NOT EXISTS conversations (
 			id SERIAL PRIMARY KEY,
 			listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -358,10 +419,47 @@ func (p *Postgres) SaveImageLinks(ctx context.Context, listingID int64, urls []s
 	return nil
 }
 
+func (p *Postgres) GetImageLinks(ctx context.Context, listingID int64) ([]string, error) {
+	query := `SELECT url FROM image_links WHERE listing_id = $1 ORDER BY id`
+	rows, err := p.db.QueryContext(ctx, query, listingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var urls []string
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		urls = append(urls, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
 func (p *Postgres) UpdateListingStatus(ctx context.Context, id int64, status string) error {
 	query := `UPDATE listings SET status = $1 WHERE id = $2`
 	_, err := p.db.ExecContext(ctx, query, status, id)
 	return err
+}
+
+func (p *Postgres) DeleteListing(ctx context.Context, id int64) error {
+	result, err := p.db.ExecContext(ctx, `DELETE FROM listings WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (*models.Listing, error) {
@@ -469,13 +567,12 @@ func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category
 	}
 
 	newProduct := models.Product{
-		Brand:             brand,
-		Name:              name,
-		Category:          category,
+		Brand:             &brand,
+		Name:              &name,
+		Category:          &category,
 		ModelVariant:      modelVariant,
 		SellPackagingCost: packagingCost,
 		SellPostageCost:   postageCost,
-		Enabled:           false,
 	}
 	if err := p.SaveProduct(ctx, &newProduct); err != nil {
 		return nil, err
@@ -607,6 +704,148 @@ func (p *Postgres) DeleteSearchTerm(ctx context.Context, id int64) error {
 	return err
 }
 
+func (p *Postgres) CreateCronJob(ctx context.Context, job *models.CronJob) error {
+	query := `
+		INSERT INTO cron_jobs (name, cron_expression, search_term_ids, is_active)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at
+	`
+	return p.db.QueryRowContext(ctx, query, job.Name, job.CronExpression, job.SearchTermIDs, job.IsActive).Scan(&job.ID, &job.CreatedAt, &job.UpdatedAt)
+}
+
+func (p *Postgres) GetAllCronJobs(ctx context.Context) ([]models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []models.CronJob
+	for rows.Next() {
+		var job models.CronJob
+		var searchTermIDsRaw interface{}
+		if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+		jobs = append(jobs, job)
+	}
+	if jobs == nil {
+		jobs = []models.CronJob{}
+	}
+	return jobs, rows.Err()
+}
+
+func (p *Postgres) GetActiveCronJobs(ctx context.Context) ([]models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs
+		WHERE is_active = TRUE
+		ORDER BY created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []models.CronJob
+	for rows.Next() {
+		var job models.CronJob
+		var searchTermIDsRaw interface{}
+		if err := rows.Scan(&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+		jobs = append(jobs, job)
+	}
+	if jobs == nil {
+		jobs = []models.CronJob{}
+	}
+	return jobs, rows.Err()
+}
+
+func (p *Postgres) GetCronJobByID(ctx context.Context, id int64) (*models.CronJob, error) {
+	query := `
+		SELECT id, name, cron_expression, search_term_ids, is_active, created_at, updated_at
+		FROM cron_jobs WHERE id = $1
+	`
+	var job models.CronJob
+	var searchTermIDsRaw interface{}
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&job.ID, &job.Name, &job.CronExpression, &searchTermIDsRaw, &job.IsActive, &job.CreatedAt, &job.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	job.SearchTermIDs = parseIntegerArray(searchTermIDsRaw)
+	return &job, nil
+}
+
+func (p *Postgres) UpdateCronJob(ctx context.Context, job *models.CronJob) error {
+	query := `UPDATE cron_jobs SET name = $1, cron_expression = $2, search_term_ids = $3, is_active = $4, updated_at = NOW() WHERE id = $5`
+	_, err := p.db.ExecContext(ctx, query, job.Name, job.CronExpression, job.SearchTermIDs, job.IsActive, job.ID)
+	return err
+}
+
+func (p *Postgres) DeleteCronJob(ctx context.Context, id int64) error {
+	query := `DELETE FROM cron_jobs WHERE id = $1`
+	_, err := p.db.ExecContext(ctx, query, id)
+	return err
+}
+
+func (p *Postgres) SaveSearchHistory(ctx context.Context, h *models.SearchHistory) error {
+	query := `
+		INSERT INTO search_history (search_term_id, search_term_desc, url, results_found, new_ads_found, marketplace_id, marketplace_name, searched_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, created_at
+	`
+	return p.db.QueryRowContext(ctx, query,
+		h.SearchTermID, h.SearchTermDesc, h.URL, h.ResultsFound, h.NewAdsFound,
+		h.MarketplaceID, h.MarketplaceName, h.SearchedAt,
+	).Scan(&h.ID, &h.CreatedAt)
+}
+
+func (p *Postgres) GetSearchHistory(ctx context.Context, limit, offset int) ([]models.SearchHistory, error) {
+	query := `
+		SELECT id, search_term_id, search_term_desc, url, results_found, new_ads_found, 
+		       marketplace_id, marketplace_name, searched_at, created_at
+		FROM search_history
+		ORDER BY searched_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := p.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []models.SearchHistory
+	for rows.Next() {
+		var h models.SearchHistory
+		if err := rows.Scan(&h.ID, &h.SearchTermID, &h.SearchTermDesc, &h.URL, &h.ResultsFound, &h.NewAdsFound, &h.MarketplaceID, &h.MarketplaceName, &h.SearchedAt, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, rows.Err()
+}
+
+func (p *Postgres) GetSearchHistoryCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM search_history`
+	var count int
+	err := p.db.QueryRowContext(ctx, query).Scan(&count)
+	return count, err
+}
+
 func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM listings WHERE link = $1)`
 	var exists bool
@@ -672,7 +911,7 @@ func (p *Postgres) GetMarketplaceByID(ctx context.Context, id int64) (*models.Ma
 }
 
 func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationType, error) {
-	query := `SELECT id, name FROM valuation_types ORDER BY id`
+	query := `SELECT id, name, enabled FROM valuation_types ORDER BY id`
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -682,7 +921,7 @@ func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationTyp
 	var types []models.ValuationType
 	for rows.Next() {
 		var vt models.ValuationType
-		if err := rows.Scan(&vt.ID, &vt.Name); err != nil {
+		if err := rows.Scan(&vt.ID, &vt.Name, &vt.Enabled); err != nil {
 			return nil, err
 		}
 		types = append(types, vt)
@@ -856,6 +1095,19 @@ func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, lis
 	return err
 }
 
+func (p *Postgres) UpdateValuation(ctx context.Context, id int64, valuation int) (int64, error) {
+	query := `UPDATE valuations SET valuation = $1 WHERE id = $2`
+	res, err := p.db.ExecContext(ctx, query, valuation, id)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 type ListingWithValuations struct {
 	Listing    models.Listing
 	Product    *models.Product
@@ -902,6 +1154,7 @@ func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, erro
 	var rules models.Economics
 	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount)
 	if err == sql.ErrNoRows {
+		fmt.Println("GetTradingRules: No rules found in database, using defaults")
 		return &models.Economics{
 			MinProfitSEK: intPtr(0),
 			MinDiscount:  intPtr(0),
@@ -910,11 +1163,41 @@ func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, erro
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount)
 	return &rules, nil
 }
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics) error {
+	var minProfit interface{} = nil
+	var minDiscount interface{} = nil
+	if rules.MinProfitSEK != nil {
+		minProfit = *rules.MinProfitSEK
+	}
+	if rules.MinDiscount != nil {
+		minDiscount = *rules.MinDiscount
+	}
+
+	// Try update first
+	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2`, minProfit, minDiscount)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+
+	// No rows updated -> insert a new row
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount) VALUES ($1, $2) RETURNING id`, minProfit, minDiscount).Scan(&id)
+	if err != nil {
+		return err
+	}
+	rules.ID = id
+	return nil
 }
 
 type ListingWithProfit struct {
@@ -965,6 +1248,123 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProf
 		result = append(result, listingWithP)
 	}
 	return result, nil
+}
+
+func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfit, error) {
+	listings, err := p.GetAllListings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]ListingWithProfit, 0, len(listings))
+
+	rules, err := p.GetTradingRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	minProfit := 0
+	if rules.MinProfitSEK != nil {
+		minProfit = *rules.MinProfitSEK
+	}
+	minDiscount := 0
+	if rules.MinDiscount != nil {
+		minDiscount = *rules.MinDiscount
+	}
+	_ = minProfit
+	_ = minDiscount
+
+	for _, l := range listings {
+		listingWithP := ListingWithProfit{Listing: l}
+
+		if l.Price != nil && l.Valuation > 0 {
+			shippingCost := 0
+			if l.ShippingCost != nil {
+				shippingCost = *l.ShippingCost
+			}
+			profit := l.Valuation - *l.Price - shippingCost
+			discountPercent := float64(profit) / float64(l.Valuation) * 100
+
+			if profit >= minProfit && discountPercent >= float64(minDiscount) {
+				listingWithP.PotentialProfit = profit
+				listingWithP.DiscountPercent = discountPercent
+				fmt.Printf("Listing %d passes: profit=%d, discount=%.1f%%\n", l.ID, profit, discountPercent)
+			} else {
+				continue
+			}
+		} else {
+			continue
+		}
+
+		if l.ProductID != nil {
+			vals, err := p.GetValuationsForListing(ctx, l.ID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Valuations = vals
+
+			product, err := p.GetProductByID(ctx, *l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			listingWithP.Product = product
+		}
+		result = append(result, listingWithP)
+	}
+	return result, nil
+}
+
+func (p *Postgres) SaveScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
+	query := `
+		INSERT INTO scraping_runs (started_at, completed_at, status, total_ads_found, total_listings_saved, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at
+	`
+	return p.db.QueryRowContext(ctx, query,
+		run.StartedAt, run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage,
+	).Scan(&run.ID, &run.CreatedAt)
+}
+
+func (p *Postgres) UpdateScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
+	query := `
+		UPDATE scraping_runs 
+		SET completed_at = $1, status = $2, total_ads_found = $3, total_listings_saved = $4, error_message = $5
+		WHERE id = $6
+	`
+	_, err := p.db.ExecContext(ctx, query,
+		run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage, run.ID,
+	)
+	return err
+}
+
+func (p *Postgres) GetScrapingRuns(ctx context.Context, limit, offset int) ([]models.ScrapingRun, error) {
+	query := `
+		SELECT id, started_at, completed_at, status, total_ads_found, total_listings_saved, total_good_buys, error_message, created_at
+		FROM scraping_runs
+		ORDER BY started_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := p.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []models.ScrapingRun
+	for rows.Next() {
+		var run models.ScrapingRun
+		if err := rows.Scan(&run.ID, &run.StartedAt, &run.CompletedAt, &run.Status, &run.TotalAdsFound, &run.TotalListingsSaved, &run.TotalGoodBuys, &run.ErrorMessage, &run.CreatedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (p *Postgres) GetScrapingRunsCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM scraping_runs`
+	var count int
+	err := p.db.QueryRowContext(ctx, query).Scan(&count)
+	return count, err
 }
 
 // Conversation methods

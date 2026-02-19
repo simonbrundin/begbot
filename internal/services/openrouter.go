@@ -74,6 +74,8 @@ func (c *OpenRouterClient) Chat(ctx context.Context, model, prompt string) (stri
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	log.Printf("DEBUG OpenRouter: Using API key: %s...", c.apiKey[:20])
+	log.Printf("DEBUG OpenRouter: SiteURL: %s, SiteName: %s, Model: %s", c.siteURL, c.siteName, model)
 	req.Header.Set("HTTP-Referer", c.siteURL)
 	req.Header.Set("X-Title", c.siteName)
 	req.Header.Set("User-Agent", "Begbot/1.0")

@@ -94,19 +94,18 @@ vault kv put prod/begbot database_password=xxx llm_api_key=xxx smtp_username=xxx
          - (OM trasig) > return
    2. Värdera
       1. Samla in värderingar
+         1. Egen värdering
          1. Värdering från egen databas
             1. Sortera sålda varor på pris och gör en graf med x-axel pris och
                y-axel dagar den låg ute till försäljning.
             2. Hitta grafen k-värde och välj priset för vår valda
                försäljningstid (tex 14 dagar)
             3. Är priset dyrare avbryt inköpsprocess
-         2. Traderas värderingsverktyg
+         1. Traderas värderingsverktyg
             - https://www.tradera.com/valuation
-         3. Sålda annonser
+         1. Sålda annonser
             1. Marketplace
             2. Ebay
-         4. Nypris
-            1. LLM tar fram nypris
       2. Sammanställ värdering
          - LLM sammanställer till ett pris och en säkerhetsprocent
    3. Frakt

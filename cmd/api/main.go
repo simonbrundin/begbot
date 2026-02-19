@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,9 +35,11 @@ func init() {
 }
 
 type Server struct {
-	db               *db.Postgres
-	jobService       *services.JobService
-	messagingService *services.MessagingService
+	db                   *db.Postgres
+	jobService           *services.JobService
+	searchHistoryService *services.SearchHistoryService
+	scheduler            *services.Scheduler
+	messagingService     *services.MessagingService
 }
 
 func main() {
@@ -58,13 +61,24 @@ func main() {
 		logger.Fatalf("Failed to run migrations: %v", err)
 	}
 
+	marketplaceService := services.NewMarketplaceService(cfg)
+	cacheService := services.NewCacheService(cfg)
 	llmService := services.NewLLMService(cfg)
+	valuationService := services.NewValuationService(cfg, database, llmService)
+	botService := services.NewBotService(cfg, marketplaceService, cacheService, llmService, valuationService, database)
 	messagingService := services.NewMessagingService(cfg, database, llmService)
-	
+
+	scheduler := services.NewScheduler(database, cfg, botService)
+	if err := scheduler.Start(context.Background()); err != nil {
+		logger.Printf("Warning: Failed to start scheduler: %v", err)
+	}
+
 	server := &Server{
-		db:               database,
-		jobService:       services.NewJobService(),
-		messagingService: messagingService,
+		db:                   database,
+		jobService:           services.NewJobService(),
+		searchHistoryService: services.NewSearchHistoryService(database),
+		scheduler:            scheduler,
+		messagingService:     messagingService,
 	}
 
 	mux := http.NewServeMux()
@@ -81,6 +95,12 @@ func main() {
 	mux.HandleFunc("/api/marketplaces", server.getMarketplaces)
 	mux.HandleFunc("/api/search-terms", server.searchTermsHandler)
 	mux.HandleFunc("/api/search-terms/", server.searchTermItemHandler)
+	mux.HandleFunc("/api/cron-jobs", server.cronJobsHandler)
+	mux.HandleFunc("/api/cron-jobs/", server.cronJobItemHandler)
+	mux.HandleFunc("/api/cron-jobs/status", server.cronJobsStatusHandler)
+	mux.HandleFunc("/api/cron-jobs/cancel", server.cronJobsCancelHandler)
+	mux.HandleFunc("/api/search-history", server.searchHistoryHandler)
+	mux.HandleFunc("/api/scraping-runs", server.scrapingRunsHandler)
 	mux.HandleFunc("/api/fetch-ads", func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
 	})
@@ -89,8 +109,10 @@ func main() {
 	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
 	mux.HandleFunc("/api/valuation-types", server.valuationTypesHandler)
 	mux.HandleFunc("/api/valuations", server.valuationsHandler)
+	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
 	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
 	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
+	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
 	mux.HandleFunc("/api/conversations", server.conversationsHandler)
 	mux.HandleFunc("/api/conversations/", server.conversationItemHandler)
 	mux.HandleFunc("/api/messages", server.messagesHandler)
@@ -98,7 +120,12 @@ func main() {
 
 	headers := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			origin := r.Header.Get("Origin")
+			if origin != "" && (strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1")) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type")
 			if r.Method == "OPTIONS" {
@@ -120,6 +147,7 @@ func main() {
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
@@ -129,6 +157,7 @@ func (s *Server) getInventory(w http.ResponseWriter, r *http.Request) {
 		api.WriteServerError(w, err.Error())
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
 }
 
@@ -191,9 +220,20 @@ func (s *Server) inventoryItemHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getListings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	listings, err := s.db.GetListingsWithProfit(ctx)
+
+	potentialOnly := r.URL.Query().Get("potential") == "true" || r.URL.Query().Get("good-value") == "true"
+	logger.Printf("getListings: potentialOnly=%v", potentialOnly)
+
+	var listings []db.ListingWithProfit
+	var err error
+
+	if potentialOnly {
+		listings, err = s.db.GetPotentialListings(ctx)
+	} else {
+		listings, err = s.db.GetListingsWithProfit(ctx)
+	}
 	if err != nil {
-		logger.Printf("GetListingsWithProfit error: %v", err)
+		logger.Printf("GetListings error: %v", err)
 		api.WriteServerError(w, err.Error())
 		return
 	}
@@ -208,6 +248,7 @@ func (s *Server) getListings(w http.ResponseWriter, r *http.Request) {
 		listings = filtered
 	}
 	logger.Printf("Returning %d listings", len(listings))
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(listings)
 }
 
@@ -264,7 +305,15 @@ func (s *Server) listingItemHandler(w http.ResponseWriter, r *http.Request) {
 		listing.ID = id
 		json.NewEncoder(w).Encode(listing)
 	case "DELETE":
-		w.WriteHeader(204)
+		if err := s.db.DeleteListing(r.Context(), id); err != nil {
+			if err == sql.ErrNoRows {
+				api.WriteNotFound(w, "listing not found")
+				return
+			}
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -280,12 +329,56 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 	var products []models.Product
 	for rows.Next() {
 		var p models.Product
-		if err := rows.Scan(&p.ID, &p.Brand, &p.Name, &p.Category, &p.ModelVariant, &p.SellPackagingCost, &p.SellPostageCost, &p.NewPrice, &p.Enabled, &p.CreatedAt); err != nil {
+		var brand, name, category, modelVariant sql.NullString
+		var sellPackagingCost, sellPostageCost int
+		var newPrice sql.NullInt64
+		var enabled sql.NullBool
+		var createdAt sql.NullTime
+
+		if err := rows.Scan(
+			&p.ID,
+			&brand,
+			&name,
+			&category,
+			&modelVariant,
+			&sellPackagingCost,
+			&sellPostageCost,
+			&newPrice,
+			&enabled,
+			&createdAt,
+		); err != nil {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+
+		if brand.Valid {
+			p.Brand = &brand.String
+		}
+		if name.Valid {
+			p.Name = &name.String
+		}
+		if category.Valid {
+			p.Category = &category.String
+		}
+		if modelVariant.Valid {
+			p.ModelVariant = &modelVariant.String
+		}
+		p.SellPackagingCost = sellPackagingCost
+		p.SellPostageCost = sellPostageCost
+		if newPrice.Valid {
+			newPriceVal := int(newPrice.Int64)
+			p.NewPrice = &newPriceVal
+		}
+		if enabled.Valid {
+			p.Enabled = &enabled.Bool
+		}
+		if createdAt.Valid {
+			p.CreatedAt = &createdAt.Time
+		}
+
 		products = append(products, p)
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(products)
 }
 
@@ -312,6 +405,7 @@ func (s *Server) productsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(201)
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(product)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
@@ -334,9 +428,52 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		product.ID = id
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(product)
 	case "DELETE":
 		w.WriteHeader(204)
+	}
+}
+
+func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		rules, err := s.db.GetTradingRules(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, rules)
+		return
+	case "PUT", "POST":
+		var payload models.Economics
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		// Basic validation: non-negative values
+		if payload.MinProfitSEK != nil && *payload.MinProfitSEK < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_profit_sek", Message: "must be non-negative"}})
+			return
+		}
+		if payload.MinDiscount != nil && *payload.MinDiscount < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_discount", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveTradingRules(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		// Return current rules from DB
+		rules, err := s.db.GetTradingRules(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, rules)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 	}
 }
 
@@ -358,6 +495,7 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 		transactions = append(transactions, t)
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(transactions)
 }
 
@@ -382,6 +520,7 @@ func (s *Server) transactionsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(201)
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(transaction)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
@@ -413,6 +552,7 @@ func (s *Server) getTransactionTypes(w http.ResponseWriter, r *http.Request) {
 		}
 		types = append(types, t)
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types)
 }
 
@@ -434,6 +574,7 @@ func (s *Server) getMarketplaces(w http.ResponseWriter, r *http.Request) {
 		}
 		marketplaces = append(marketplaces, m)
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(marketplaces)
 }
 
@@ -470,6 +611,7 @@ func (s *Server) searchTermsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(201)
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(term)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
@@ -495,6 +637,7 @@ func (s *Server) searchTermItemHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(term)
 	case "DELETE":
 		if err := s.db.DeleteSearchTerm(r.Context(), id); err != nil {
@@ -503,6 +646,256 @@ func (s *Server) searchTermItemHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(204)
 	}
+}
+
+func (s *Server) cronJobsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		jobs, err := s.db.GetAllCronJobs(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jobs)
+	case "POST":
+		var job models.CronJob
+		if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		if errs := api.CombineErrors(
+			api.ValidateRequired(job.Name, "name"),
+			api.ValidateRequired(job.CronExpression, "cron_expression"),
+		); len(errs) > 0 {
+			api.WriteValidationError(w, errs)
+			return
+		}
+		if err := s.db.CreateCronJob(r.Context(), &job); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
+		w.WriteHeader(201)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(job)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := r.URL.Path[len("/api/cron-jobs/"):]
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		api.WriteBadRequest(w, "Invalid ID")
+		return
+	}
+
+	switch r.Method {
+	case "GET":
+		job, err := s.db.GetCronJobByID(r.Context(), id)
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if job == nil {
+			api.WriteError(w, "Not found", "NOT_FOUND", 404)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(job)
+	case "PUT":
+		var job models.CronJob
+		if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		job.ID = id
+		if err := s.db.UpdateCronJob(r.Context(), &job); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(job)
+	case "DELETE":
+		if err := s.db.DeleteCronJob(r.Context(), id); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if s.scheduler != nil {
+			s.scheduler.RefreshJobs(r.Context())
+		}
+		w.WriteHeader(204)
+	}
+}
+
+func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	var runningJobs []int64
+	if s.scheduler != nil {
+		running := s.scheduler.GetRunningJobs()
+		for id := range running {
+			runningJobs = append(runningJobs, id)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"running_jobs": runningJobs,
+	})
+}
+
+func (s *Server) cronJobsCancelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	var request struct {
+		JobID int64 `json:"job_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		api.WriteBadRequest(w, "Invalid request body")
+		return
+	}
+
+	if request.JobID == 0 {
+		api.WriteBadRequest(w, "job_id is required")
+		return
+	}
+
+	success := false
+	if s.scheduler != nil {
+		success = s.scheduler.CancelJob(request.JobID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": success,
+	})
+}
+
+func (s *Server) searchHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	history, count, err := s.searchHistoryService.GetHistory(r.Context(), page, pageSize)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	type PaginatedResponse struct {
+		Data       []models.SearchHistory `json:"data"`
+		TotalCount int                    `json:"total_count"`
+		Page       int                    `json:"page"`
+		PageSize   int                    `json:"page_size"`
+		TotalPages int                    `json:"total_pages"`
+	}
+
+	totalPages := count / pageSize
+	if count%pageSize > 0 {
+		totalPages++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       history,
+		TotalCount: count,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
+}
+
+func (s *Server) scrapingRunsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	offset := (page - 1) * pageSize
+	runs, err := s.db.GetScrapingRuns(r.Context(), pageSize, offset)
+	if err != nil {
+		logger.Printf("ERROR GetScrapingRuns: %v", err)
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	count, err := s.db.GetScrapingRunsCount(r.Context())
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	type PaginatedResponse struct {
+		Data       []models.ScrapingRun `json:"data"`
+		TotalCount int                  `json:"total_count"`
+		Page       int                  `json:"page"`
+		PageSize   int                  `json:"page_size"`
+		TotalPages int                  `json:"total_pages"`
+	}
+
+	totalPages := count / pageSize
+	if count%pageSize > 0 {
+		totalPages++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       runs,
+		TotalCount: count,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) compiledValuationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -736,6 +1129,7 @@ func (s *Server) valuationTypesHandler(w http.ResponseWriter, r *http.Request) {
 		api.WriteServerError(w, err.Error())
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(types)
 }
 
@@ -758,6 +1152,7 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(valuations)
 	case "POST":
 		var v models.Valuation
@@ -765,6 +1160,8 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 			return
 		}
+
+		logger.Printf("POST /api/valuations payload=%+v", v)
 		if errs := api.ValidateNonNegative(int64(v.Valuation), "valuation"); len(errs) > 0 {
 			api.WriteValidationError(w, errs)
 			return
@@ -774,8 +1171,52 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+
+		logger.Printf("POST /api/valuations created id=%d product_id=%d valuation=%d", v.ID, v.ProductID, v.Valuation)
 		w.WriteHeader(201)
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(v)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) valuationItemHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := r.URL.Path[len("/api/valuations/"):]
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		api.WriteBadRequest(w, "Invalid ID")
+		return
+	}
+
+	switch r.Method {
+	case "PUT":
+		var payload struct {
+			Valuation int `json:"valuation"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+
+		logger.Printf("PUT /api/valuations/%d payload=%+v", id, payload)
+		if errs := api.ValidateNonNegative(int64(payload.Valuation), "valuation"); len(errs) > 0 {
+			api.WriteValidationError(w, errs)
+			return
+		}
+		rows, err := s.db.UpdateValuation(r.Context(), id, payload.Valuation)
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		logger.Printf("PUT /api/valuations/%d rows_affected=%d", id, rows)
+		if rows == 0 {
+			api.WriteError(w, "Not found", "NOT_FOUND", 404)
+			return
+		}
+		api.WriteSuccess(w, map[string]interface{}{"id": id, "valuation": payload.Valuation, "rows_affected": rows})
+	case "DELETE":
+		w.WriteHeader(204)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 	}

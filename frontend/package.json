@@ -23,6 +23,8 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@iconify-json/lucide": "^1.2.26",
+    "@nuxt/icon": "^1.10.0",
     "@nuxt/test-utils": "^3.23.0",
     "@vue/test-utils": "^2.4.6",
     "happy-dom": "^20.5.0",

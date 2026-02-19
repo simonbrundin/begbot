@@ -27,14 +27,16 @@ func init() {
 }
 
 type BotService struct {
-	cfg                *config.Config
-	marketplaceService *MarketplaceService
-	cacheService       *CacheService
-	llmService         *LLMService
-	valuationService   *ValuationService
-	database           *db.Postgres
-	jobService         *JobService
-	jobID              string
+	cfg                 *config.Config
+	marketplaceService  *MarketplaceService
+	cacheService        *CacheService
+	llmService          *LLMService
+	valuationService    *ValuationService
+	database            *db.Postgres
+	jobService          *JobService
+	jobID               string
+	scrapingRunID       int64
+	searchTermsOverride []models.SearchTerm
 }
 
 func NewBotService(cfg *config.Config, marketplaceService *MarketplaceService, cacheService *CacheService, llmService *LLMService, valuationService *ValuationService, database *db.Postgres) *BotService {
@@ -61,6 +63,10 @@ func NewBotServiceWithJob(cfg *config.Config, marketplaceService *MarketplaceSer
 	}
 }
 
+func (s *BotService) SetSearchTermsOverride(terms []models.SearchTerm) {
+	s.searchTermsOverride = terms
+}
+
 func (s *BotService) log(level LogLevel, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	log.Printf("[%s] %s", level, message)
@@ -76,10 +82,24 @@ func (s *BotService) Run() error {
 
 	s.log(LogLevelInfo, "=== STARTING BEGBOT ===")
 
+	scrapingRun := &models.ScrapingRun{
+		StartedAt: time.Now(),
+		Status:    "running",
+	}
+	if err := s.database.SaveScrapingRun(ctx, scrapingRun); err != nil {
+		s.log(LogLevelWarning, "Failed to create scraping run: %v", err)
+	} else {
+		s.scrapingRunID = scrapingRun.ID
+	}
+
 	searchTerms, err := s.database.GetActiveSearchTerms(ctx)
 	if err != nil {
 		s.log(LogLevelError, "Error getting search terms: %v", err)
 		return fmt.Errorf("failed to get search terms: %w", err)
+	}
+
+	if len(s.searchTermsOverride) > 0 {
+		searchTerms = s.searchTermsOverride
 	}
 
 	s.log(LogLevelInfo, "Found %d search terms", len(searchTerms))
@@ -130,6 +150,7 @@ func (s *BotService) Run() error {
 		s.log(LogLevelInfo, "Found %d ads for %s", len(adsList), term.Description)
 		totalAdsFound += len(adsList)
 
+		newAdsCount := 0
 		for _, ad := range adsList {
 			exists, err := s.database.ListingExistsByLink(ctx, ad.Link)
 			if err != nil {
@@ -140,12 +161,28 @@ func (s *BotService) Run() error {
 				s.log(LogLevelInfo, "Skipping duplicate: %s", ad.Link)
 				continue
 			}
+			newAdsCount++
 			s.log(LogLevelInfo, "Processing new ad: %s (price: %.0f SEK)", ad.Link, ad.Price)
 			if err := s.processAd(ctx, ad); err != nil {
 				s.log(LogLevelError, "Error processing ad %s: %v", ad.Link, err)
 			} else {
 				totalListingsSaved++
 			}
+		}
+
+		marketplaceName := s.getMarketplaceName(term.MarketplaceID)
+		history := &models.SearchHistory{
+			SearchTermID:    term.ID,
+			SearchTermDesc:  term.Description,
+			URL:             term.URL,
+			ResultsFound:    len(adsList),
+			NewAdsFound:     newAdsCount,
+			MarketplaceID:   term.MarketplaceID,
+			MarketplaceName: marketplaceName,
+			SearchedAt:      time.Now(),
+		}
+		if err := s.database.SaveSearchHistory(ctx, history); err != nil {
+			s.log(LogLevelWarning, "Failed to save search history: %v", err)
 		}
 
 		if s.jobService != nil && s.jobID != "" {
@@ -158,6 +195,20 @@ func (s *BotService) Run() error {
 		job := s.jobService.GetJob(s.jobID)
 		if job != nil && job.Status != JobStatusCancelled {
 			s.jobService.CompleteJob(s.jobID, totalAdsFound)
+		}
+	}
+
+	if s.scrapingRunID > 0 {
+		now := time.Now()
+		run := &models.ScrapingRun{
+			ID:                 s.scrapingRunID,
+			CompletedAt:        &now,
+			Status:             "completed",
+			TotalAdsFound:      totalAdsFound,
+			TotalListingsSaved: totalListingsSaved,
+		}
+		if err := s.database.UpdateScrapingRun(ctx, run); err != nil {
+			s.log(LogLevelWarning, "Failed to update scraping run: %v", err)
 		}
 	}
 
@@ -311,7 +362,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		s.log(LogLevelError, "Failed to save listing: %v", err)
 		return err
 	}
-	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", validatedProduct.Name, item.BuyPrice, compiledValuation)
+	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", *validatedProduct.Name, item.BuyPrice, compiledValuation)
 
 	// Save individual valuations to the database
 	if len(valInputs) > 0 {
@@ -320,6 +371,14 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 			s.log(LogLevelWarning, "Failed to save valuations: %v", err)
 		}
 	}
+
+	// Check trading rules and send email if listing passes
+	go func() {
+		err := s.SendTradingRuleEmail(ctx, listing, validatedProduct)
+		if err != nil {
+			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
+		}
+	}()
 
 	if candidate.ShouldBuy {
 		s.log(LogLevelInfo, "RECOMMENDATION: Buy %s for %d SEK (profit: %d SEK)", item.SourceLink, candidate.TotalCost, candidate.EstimatedSell-candidate.TotalCost)
@@ -373,10 +432,132 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Pro
 		return nil, nil
 	}
 
-	if !product.Enabled {
+	if product.Enabled == nil || !*product.Enabled {
 		s.log(LogLevelWarning, "Product not enabled: %s %s (%s) - skipping", productInfo.Manufacturer, productInfo.Model, productInfo.Category)
 		return nil, nil
 	}
 
 	return product, nil
+}
+
+func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product) error {
+	var tradingRules *models.Economics
+	var err error
+
+	if s.database != nil {
+		tradingRules, err = s.database.GetTradingRules(ctx)
+		if err != nil {
+			s.log(LogLevelWarning, "Failed to get trading rules: %v", err)
+		}
+	}
+
+	if tradingRules == nil {
+		defaultProfit := 0
+		defaultDiscount := 0
+		tradingRules = &models.Economics{
+			MinProfitSEK: &defaultProfit,
+			MinDiscount:  &defaultDiscount,
+		}
+	}
+
+	minProfitSEK := 0
+	if tradingRules.MinProfitSEK != nil {
+		minProfitSEK = *tradingRules.MinProfitSEK
+	}
+
+	minDiscount := 0
+	if tradingRules.MinDiscount != nil {
+		minDiscount = *tradingRules.MinDiscount
+	}
+
+	profit := listing.Valuation - *listing.Price
+	discountPercent := float64(profit) / float64(listing.Valuation) * 100
+
+	if profit <= minProfitSEK || discountPercent <= float64(minDiscount) {
+		s.log(LogLevelInfo, "Listing does not pass trading rules: profit=%d (>%d), discount=%.2f%% (>%d%%)",
+			profit, minProfitSEK, discountPercent, minDiscount)
+		return nil
+	}
+
+	go func() {
+		emailCfg := EmailConfig{
+			SMTPHost:     s.cfg.Email.SMTPHost,
+			SMTPPort:     s.cfg.Email.SMTPPort,
+			SMTPUsername: s.cfg.Email.SMTPUsername,
+			SMTPPassword: s.cfg.Email.SMTPPassword,
+			From:         s.cfg.Email.From,
+			Recipients:   s.cfg.Email.Recipients,
+		}
+
+		subject := "Ny annons som passar dina trading rules - " + listing.Title
+
+		// Prepare template data
+		priceStr := ""
+		if listing.Price != nil {
+			priceStr = fmt.Sprintf("%d kr", *listing.Price)
+		}
+		profit := listing.Valuation
+		if listing.Price != nil {
+			profit = listing.Valuation - *listing.Price
+		}
+		profitStr := fmt.Sprintf("%d kr", profit)
+		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
+
+		desc := ""
+		if listing.Description != nil {
+			desc = *listing.Description
+		}
+
+		brand := ""
+		name := ""
+		newPrice := ""
+		if product != nil {
+			if product.Brand != nil {
+				brand = *product.Brand
+			}
+			if product.Name != nil {
+				name = *product.Name
+			}
+			if product.NewPrice != nil {
+				newPrice = fmt.Sprintf("%d kr", *product.NewPrice)
+			}
+		}
+
+		// Fetch image URLs from DB (can be multiple)
+		var imageURLs []string
+		if s.database != nil {
+			if listing.ID != 0 {
+				if imgs, err := s.database.GetImageLinks(ctx, listing.ID); err == nil {
+					imageURLs = imgs
+				}
+			}
+		}
+
+		if len(imageURLs) == 0 {
+			imageURLs = []string{""}
+		}
+
+		mailData := map[string]interface{}{
+			"Title":       listing.Title,
+			"Price":       priceStr,
+			"Valuation":   fmt.Sprintf("%d kr", listing.Valuation),
+			"Profit":      profitStr,
+			"Discount":    discountStr,
+			"Description": desc,
+			"ImageURLs":   imageURLs,
+			"Link":        listing.Link,
+			"NewPrice":    newPrice,
+			"Brand":       brand,
+			"Name":        name,
+		}
+
+		err := SendMailHTMLWithData(emailCfg, s.cfg.Email.Recipients, subject, "mail.html", mailData)
+		if err != nil {
+			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
+		} else {
+			s.log(LogLevelInfo, "Sent trading rule email for listing: %s", listing.Link)
+		}
+	}()
+
+	return nil
 }

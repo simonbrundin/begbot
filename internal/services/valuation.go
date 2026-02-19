@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
+	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"begbot/internal/config"
@@ -57,6 +61,17 @@ type ValuationService struct {
 	compiler     *ValuationCompiler
 	defaultModel string
 	models       map[string]string
+}
+
+// Simple in-memory cache for Tradera responses
+var traderaCache = struct {
+	mu sync.RWMutex
+	m  map[string]cacheEntry
+}{m: make(map[string]cacheEntry)}
+
+type cacheEntry struct {
+	Val       ValuationInput
+	Collected time.Time
 }
 
 func NewValuationService(cfg *config.Config, database *db.Postgres, llmSvc *LLMService) *ValuationService {
@@ -447,26 +462,239 @@ func (m *TraderaValuationMethod) Priority() int {
 }
 
 func (m *TraderaValuationMethod) Valuate(ctx context.Context, productInfo ProductInfo) (*ValuationInput, error) {
-	// Stub implementation - fetch from Tradera API
-	// This would make an HTTP request to tradera.com/valuation API
-	// For now, return a placeholder value with low confidence
+	if m.svc == nil || m.svc.cfg == nil {
+		return nil, nil
+	}
 
-	// TODO: Implement actual Tradera API integration
-	// - Parse product name from productInfo
-	// - Make request to https://api.tradera.com/v1/valuation
-	// - Extract price from response
+	if !m.svc.cfg.Scraping.Tradera.Enabled {
+		return nil, nil
+	}
 
-	return &ValuationInput{
-		Type:       m.Name(),
-		Value:      0,   // Would be populated from API response
-		Confidence: 0.1, // Low confidence for stub
-		SourceURL:  "https://www.tradera.com/",
-		Metadata: map[string]interface{}{
-			"reasoning": "Tradera-integration ej implementerad - API anrop inte implementerat",
-			"status":    "stub",
-		},
+	// Build query: prefer manufacturer+model, fall back to ad text
+	query := ""
+	if productInfo.Manufacturer != "" && productInfo.Model != "" {
+		query = productInfo.Manufacturer + " " + productInfo.Model
+	} else if productInfo.AdText != "" {
+		query = productInfo.AdText
+	}
+
+	if query == "" {
+		return nil, nil
+	}
+
+	timeout := m.svc.cfg.Scraping.Tradera.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	client := &http.Client{Timeout: timeout}
+
+	apiURL := "https://api.tradera.com/v1/valuation"
+	if m.svc.cfg.Scraping.Tradera.BaseURL != "" {
+		apiURL = m.svc.cfg.Scraping.Tradera.BaseURL
+	}
+
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tradera api url: %w", err)
+	}
+
+	q := u.Query()
+	q.Set("q", query)
+	u.RawQuery = q.Encode()
+
+	// Simple cache key includes base url and query
+	cacheKey := u.String()
+	// Cache TTL
+	cacheTTL := 5 * time.Minute
+
+	// Check cache
+	traderaCache.mu.RLock()
+	if e, ok := traderaCache.m[cacheKey]; ok {
+		if time.Since(e.Collected) < cacheTTL {
+			cached := e.Val
+			traderaCache.mu.RUnlock()
+			return &cached, nil
+		}
+	}
+	traderaCache.mu.RUnlock()
+
+	// Retry loop with exponential backoff
+	var body []byte
+	maxAttempts := 3
+	backoff := 100 * time.Millisecond
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build tradera request: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("tradera request failed: %w", err)
+			if attempt < maxAttempts {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return nil, lastErr
+		}
+
+		body, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read tradera response: %w", err)
+			if attempt < maxAttempts {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return nil, lastErr
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+
+		// Handle 429 with a longer wait and retry
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxAttempts {
+			time.Sleep(500 * time.Millisecond * time.Duration(attempt))
+			continue
+		}
+
+		// For other non-OK statuses, treat as error
+		lastErr = fmt.Errorf("tradera api returned status %d: %s", resp.StatusCode, string(body))
+		if attempt < maxAttempts {
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		return nil, lastErr
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse tradera response json: %w", err)
+	}
+
+	var priceFloat float64
+	var confFloat float64
+
+	keys := []string{"price", "valuation", "value", "estimated_price", "estimatedValue", "amount"}
+	for _, k := range keys {
+		if v, ok := parsed[k]; ok && v != nil {
+			switch x := v.(type) {
+			case float64:
+				priceFloat = x
+			case int:
+				priceFloat = float64(x)
+			case int64:
+				priceFloat = float64(x)
+			case string:
+				if p, err := strconv.ParseFloat(x, 64); err == nil {
+					priceFloat = p
+				}
+			}
+			if priceFloat > 0 {
+				break
+			}
+		}
+	}
+
+	if priceFloat == 0 {
+		for _, parent := range []string{"data", "result", "valuation"} {
+			if pmap, ok := parsed[parent].(map[string]interface{}); ok {
+				for _, k := range keys {
+					if v, ok := pmap[k]; ok && v != nil {
+						switch x := v.(type) {
+						case float64:
+							priceFloat = x
+						case int:
+							priceFloat = float64(x)
+						case int64:
+							priceFloat = float64(x)
+						case string:
+							if p, err := strconv.ParseFloat(x, 64); err == nil {
+								priceFloat = p
+							}
+						}
+						if priceFloat > 0 {
+							break
+						}
+					}
+				}
+			}
+			if priceFloat > 0 {
+				break
+			}
+		}
+	}
+
+	// Confidence: top-level
+	if v, ok := parsed["confidence"]; ok && v != nil {
+		switch x := v.(type) {
+		case float64:
+			confFloat = x
+		case int:
+			confFloat = float64(x)
+		case string:
+			if c, err := strconv.ParseFloat(x, 64); err == nil {
+				confFloat = c
+			}
+		}
+	}
+
+	// Confidence: nested
+	if confFloat == 0 {
+		for _, parent := range []string{"data", "result", "valuation"} {
+			if pmap, ok := parsed[parent].(map[string]interface{}); ok {
+				if v, ok := pmap["confidence"]; ok && v != nil {
+					switch x := v.(type) {
+					case float64:
+						confFloat = x
+					case int:
+						confFloat = float64(x)
+					case string:
+						if c, err := strconv.ParseFloat(x, 64); err == nil {
+							confFloat = c
+						}
+					}
+					if confFloat > 0 {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if confFloat > 1 {
+		confFloat = confFloat / 100.0
+	}
+
+	if priceFloat <= 0 {
+		return nil, fmt.Errorf("tradera returned no usable valuation for query: %s", query)
+	}
+
+	priceInt := int(math.Round(priceFloat))
+
+	metadata := map[string]interface{}{"raw_response": parsed}
+
+	vi := ValuationInput{
+		Type:        m.Name(),
+		Value:       priceInt,
+		Confidence:  confFloat,
+		SourceURL:   u.String(),
+		Metadata:    metadata,
 		CollectedAt: time.Now(),
-	}, nil
+	}
+
+	// Save to cache
+	traderaCache.mu.Lock()
+	traderaCache.m[cacheKey] = cacheEntry{Val: vi, Collected: time.Now()}
+	traderaCache.mu.Unlock()
+
+	return &vi, nil
 }
 
 type SoldAdsValuationMethod struct {

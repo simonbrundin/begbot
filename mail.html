@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iPhone 16 Pro Max 128 GB - Annons</title>
+    <title>{{.Title}} - Annons</title>
     <style>
       body {
         font-family:
@@ -123,56 +123,47 @@
   <body>
     <div class="container">
       <div class="header">
-        <h1 class="title">iPhone 16 Pro Max - 128 GB</h1>
+        <h1 class="title">{{.Title}}</h1>
       </div>
 
       <div class="price-section">
         <div class="price-row">
           <span class="label">Inköpspris</span>
-          <span class="value">5 000 kr</span>
+          <span class="value">{{.Price}}</span>
         </div>
         <div class="price-row">
           <span class="label">Värdering</span>
-          <span class="value">8 000 kr - 95%</span>
+          <span class="value">{{.Valuation}}</span>
         </div>
         <div class="price-row">
           <span class="label">Nypris</span>
-          <span class="value">15 000 kr</span>
+          <span class="value">{{.NewPrice}}</span>
         </div>
         <div class="price-row">
           <span class="label">Vinst</span>
-          <span class="value profit">3 000 kr</span>
+          <span class="value profit">{{.Profit}}</span>
         </div>
 
         <div class="buttons">
-          <button class="btn btn-buy">Köp</button>
-          <button class="btn btn-decline">Avböj</button>
+          <a class="btn btn-buy" href="{{.Link}}">Köp</a>
+          <a class="btn btn-decline" href="#">Avböj</a>
         </div>
       </div>
 
       <div class="description">
         <h3>Annonstext</h3>
-        <p>Säljer en iPhone 16 Pro Max i färgen svart titan.</p>
-        <p>
-          Telefonen är i helt felfritt skick, sparsamt använd och väl
-          omhändertagen.
-        </p>
-        <p>
-          Batterihälsa: 99 %.<br />
-          Lagringsutrymme: 256 GB.<br />
-          Originalkartong medföljer.
-        </p>
+        <p>{{.Description}}</p>
       </div>
 
       <div class="image-container">
-        <img
-          src="https://images.blocketcdn.se/dynamic/1600w/item/20482624/7ee4b9d7-71ba-482c-8906-9d8ab840962b"
-          alt="iPhone 16 Pro Max svart titan baksida"
-          class="phone-img"
-        />
+        {{range .ImageURLs}}
+        {{if .}}
+        <img src="{{.}}" alt="{{$.Title}}" class="phone-img" />
+        {{end}}
+        {{end}}
       </div>
 
-      <a href="#" class="link">Till annons</a>
+      <a href="{{.Link}}" class="link">Till annons</a>
     </div>
   </body>
 </html>

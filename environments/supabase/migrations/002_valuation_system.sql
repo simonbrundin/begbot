@@ -5,7 +5,8 @@
 -- Valuation types: different sources of valuation data
 CREATE TABLE IF NOT EXISTS valuation_types (
     id SMALLSERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
+    name TEXT NOT NULL UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- Insert default valuation types
