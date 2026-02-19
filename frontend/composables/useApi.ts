@@ -13,16 +13,21 @@ export const useApi = () => {
 
   const fetch = async <T>(endpoint: string, options?: ApiOptions): Promise<T> => {
     const url = `${apiBase}/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`
-    
+    console.debug('useApi request', { url, method: options?.method || 'GET', body: options?.body })
+
     loadingStore.startLoading()
-    
+
     try {
       const result = await $fetch<T>(url, {
         method: options?.method || 'GET',
         body: options?.body,
         responseType: 'json'
       })
+      console.debug('useApi response', { url, result })
       return result
+    } catch (err) {
+      console.error('useApi error', { url, err })
+      throw err
     } finally {
       loadingStore.stopLoading()
     }

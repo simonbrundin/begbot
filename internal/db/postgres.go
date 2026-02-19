@@ -1070,6 +1070,19 @@ func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, lis
 	return err
 }
 
+func (p *Postgres) UpdateValuation(ctx context.Context, id int64, valuation int) (int64, error) {
+	query := `UPDATE valuations SET valuation = $1 WHERE id = $2`
+	res, err := p.db.ExecContext(ctx, query, valuation, id)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 type ListingWithValuations struct {
 	Listing    models.Listing
 	Product    *models.Product

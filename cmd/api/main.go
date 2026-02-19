@@ -101,6 +101,7 @@ func main() {
 	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
 	mux.HandleFunc("/api/valuation-types", server.valuationTypesHandler)
 	mux.HandleFunc("/api/valuations", server.valuationsHandler)
+	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
 	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
 	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
 	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
@@ -1147,6 +1148,8 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 			return
 		}
+
+		logger.Printf("POST /api/valuations payload=%+v", v)
 		if errs := api.ValidateNonNegative(int64(v.Valuation), "valuation"); len(errs) > 0 {
 			api.WriteValidationError(w, errs)
 			return
@@ -1156,9 +1159,52 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+
+		logger.Printf("POST /api/valuations created id=%d product_id=%d valuation=%d", v.ID, v.ProductID, v.Valuation)
 		w.WriteHeader(201)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(v)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) valuationItemHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := r.URL.Path[len("/api/valuations/"):]
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		api.WriteBadRequest(w, "Invalid ID")
+		return
+	}
+
+	switch r.Method {
+	case "PUT":
+		var payload struct {
+			Valuation int `json:"valuation"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+
+		logger.Printf("PUT /api/valuations/%d payload=%+v", id, payload)
+		if errs := api.ValidateNonNegative(int64(payload.Valuation), "valuation"); len(errs) > 0 {
+			api.WriteValidationError(w, errs)
+			return
+		}
+		rows, err := s.db.UpdateValuation(r.Context(), id, payload.Valuation)
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		logger.Printf("PUT /api/valuations/%d rows_affected=%d", id, rows)
+		if rows == 0 {
+			api.WriteError(w, "Not found", "NOT_FOUND", 404)
+			return
+		}
+		api.WriteSuccess(w, map[string]interface{}{"id": id, "valuation": payload.Valuation, "rows_affected": rows})
+	case "DELETE":
+		w.WriteHeader(204)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 	}

@@ -17,10 +17,10 @@ import (
 
 // ConfigTestContext holds state for config BDD tests
 type configTestContext struct {
-	cfg          *config.Config
-	err          error
-	configPath   string
-	tmpDir       string
+	cfg        *config.Config
+	err        error
+	configPath string
+	tmpDir     string
 }
 
 // InitializeConfigScenario initializes the config test context
@@ -143,12 +143,12 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 		}
 		tc.tmpDir = d
 		tc.configPath = filepath.Join(tc.tmpDir, "config.yaml")
-		
+
 		configContent := "database:\n"
 		for _, row := range table.Rows {
 			configContent += "  " + row.Cells[0].Value + ": " + row.Cells[1].Value + "\n"
 		}
-		
+
 		return os.WriteFile(tc.configPath, []byte(configContent), 0644)
 	})
 
@@ -235,7 +235,7 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 
 	ctx.And("the from address should be {string}", func(sc *godog.Step, expected string) error {
 		if tc.cfg.Email.From != expected {
-			return.Errorf("expected %s, got %s", expected, tc.cfg.Email.From)
+			return fmt.Errorf("expected %s, got %s", expected, tc.cfg.Email.From)
 		}
 		return nil
 	})
@@ -254,7 +254,11 @@ func InitializeConfigScenario(ctx *godog.ScenarioContext) {
 	})
 
 	ctx.Given("a config file with invalid YAML", func(sc *godog.Step) error {
-		tc.tmpDir = t.TempDir()
+		d, err := os.MkdirTemp("", "cfgtest")
+		if err != nil {
+			return err
+		}
+		tc.tmpDir = d
 		tc.configPath = filepath.Join(tc.tmpDir, "invalid.yaml")
 		return os.WriteFile(tc.configPath, []byte("invalid: yaml: content:["), 0644)
 	})
