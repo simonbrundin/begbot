@@ -12,6 +12,20 @@
       {{ saveStatus.message }}
     </div>
 
+    <div class="mb-4">
+      <button @click="showWeightConfig = !showWeightConfig" class="text-sm text-slate-400 hover:text-slate-200 flex items-center gap-1">
+        <span>Vikter för sammanvägd värdering</span>
+        <span>{{ showWeightConfig ? '▲' : '▼' }}</span>
+      </button>
+      <div v-if="showWeightConfig" class="mt-2 card p-4 flex flex-wrap gap-4">
+        <div v-for="vt in enabledValuationTypes" :key="vt.id" class="flex items-center gap-2">
+          <label class="text-sm text-slate-300">{{ vt.name }}</label>
+          <input v-model.number="weights[vt.id]" type="number" min="0" step="0.1" class="input w-20 py-1 text-sm" />
+        </div>
+        <div v-if="enabledValuationTypes.length === 0" class="text-sm text-slate-400">Inga aktiverade värderingstyper.</div>
+      </div>
+    </div>
+
     <div class="card overflow-hidden">
       <table class="table">
         <thead>
@@ -21,6 +35,7 @@
             <th>Kategori</th>
             <th>Variant</th>
             <th v-for="vt in enabledValuationTypes" :key="vt.id">{{ vt.name }}</th>
+            <th>Sammanvägd värdering</th>
             <th>Aktiverad</th>
             <th>Skapad</th>
             <th></th>
@@ -61,6 +76,14 @@
                 <div v-else class="text-xs text-slate-400">-</div>
               </td>
             </template>
+            <td>
+              <template v-if="weightedValuations[product.id]">
+                <span class="badge badge-info">
+                  {{ formatValuationAsSEK(weightedValuations[product.id]!.average) }}
+                </span>
+                <span class="text-xs text-slate-400 ml-1" :title="`Säkerhetsprocent baserat på spridning mellan värderingstyper`">{{ weightedValuations[product.id]!.safetyPercent }}%</span>
+              </template>
+            </td>
             <td>
               <button
                 @click="toggleEnabled(product)"
@@ -141,6 +164,49 @@ const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.
 const loading = ref(false)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
+
+// Weights for sammanvägd värdering (keyed by valuation type id, default 1)
+const weights = ref<Record<number, number>>({})
+const showWeightConfig = ref(false)
+
+watch(valuationTypes, (types) => {
+  types.forEach(vt => {
+    if (vt.enabled !== false && weights.value[vt.id] === undefined) {
+      weights.value[vt.id] = 1
+    }
+  })
+}, { immediate: true })
+
+const computeWeightedValuation = (productId: number): { average: number; safetyPercent: number } | null => {
+  const enabledTypes = enabledValuationTypes.value
+  if (enabledTypes.length === 0) return null
+  const entries = enabledTypes
+    .map(vt => {
+      const v = getValuationForType(productId, vt.id)
+      return v !== null ? { valuation: v.valuation, weight: weights.value[vt.id] ?? 1 } : null
+    })
+    .filter((e): e is { valuation: number; weight: number } => e !== null)
+  if (entries.length === 0) return null
+  const totalWeight = entries.reduce((s, e) => s + e.weight, 0)
+  if (totalWeight === 0) return null
+  const average = entries.reduce((s, e) => s + e.valuation * e.weight, 0) / totalWeight
+  let safetyPercent = 100
+  if (entries.length > 1) {
+    const mean = entries.reduce((s, e) => s + e.valuation, 0) / entries.length
+    const variance = entries.reduce((s, e) => s + Math.pow(e.valuation - mean, 2), 0) / entries.length
+    const stdDev = Math.sqrt(variance)
+    safetyPercent = mean !== 0 ? Math.max(0, Math.round(100 - (stdDev / Math.abs(mean) * 100))) : 0
+  }
+  return { average: Math.round(average), safetyPercent }
+}
+
+const weightedValuations = computed(() => {
+  const result: Record<number, { average: number; safetyPercent: number } | null> = {}
+  for (const product of products.value) {
+    result[product.id] = computeWeightedValuation(product.id)
+  }
+  return result
+})
 
 const defaultForm = {
   brand: '',
