@@ -147,6 +147,12 @@ export interface Valuation {
   created_at: string
 }
 
+export interface ValuationType {
+  id: number
+  name: string
+  enabled?: boolean | null
+}
+
 export interface ListingWithDetails {
   Listing: Listing
   Product: Product | null

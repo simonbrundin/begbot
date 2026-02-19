@@ -201,7 +201,8 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE IF EXISTS products ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT FALSE`,
 		`CREATE TABLE IF NOT EXISTS valuation_types (
 			id SMALLINT PRIMARY KEY,
-			name TEXT NOT NULL
+			name TEXT NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE
 		)`,
 		`CREATE TABLE IF NOT EXISTS valuations (
 			id SERIAL PRIMARY KEY,
@@ -215,11 +216,12 @@ func (p *Postgres) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_valuations_product_id ON valuations(product_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_type_id ON valuations(valuation_type_id)`,
 		`INSERT INTO valuation_types (id, name) VALUES
-			(1, 'Egen databas'),
-			(2, 'Tradera'),
-			(3, 'eBay'),
-			(4, 'Nypris (LLM)')
-		ON CONFLICT (id) DO NOTHING`,
+				(1, 'Egen databas'),
+				(2, 'Tradera'),
+				(3, 'eBay'),
+				(4, 'Nypris (LLM)')
+			ON CONFLICT (id) DO NOTHING`,
+		`ALTER TABLE IF EXISTS valuation_types ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE`,
 		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
 		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
 		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
@@ -884,7 +886,7 @@ func (p *Postgres) GetMarketplaceByID(ctx context.Context, id int64) (*models.Ma
 }
 
 func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationType, error) {
-	query := `SELECT id, name FROM valuation_types ORDER BY id`
+	query := `SELECT id, name, enabled FROM valuation_types ORDER BY id`
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -894,7 +896,7 @@ func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationTyp
 	var types []models.ValuationType
 	for rows.Next() {
 		var vt models.ValuationType
-		if err := rows.Scan(&vt.ID, &vt.Name); err != nil {
+		if err := rows.Scan(&vt.ID, &vt.Name, &vt.Enabled); err != nil {
 			return nil, err
 		}
 		types = append(types, vt)

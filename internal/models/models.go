@@ -149,8 +149,9 @@ type SearchTermWithCriteria struct {
 }
 
 type ValuationType struct {
-	ID   int16  `json:"id" db:"id"`
-	Name string `json:"name" db:"name"`
+	ID      int16  `json:"id" db:"id"`
+	Name    string `json:"name" db:"name"`
+	Enabled bool   `json:"enabled" db:"enabled"`
 }
 
 type Valuation struct {

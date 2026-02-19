@@ -15,6 +15,7 @@
             <th>Namn</th>
             <th>Kategori</th>
             <th>Variant</th>
+            <th v-for="vt in enabledValuationTypes" :key="vt.id">{{ vt.name }}</th>
             <th>Aktiverad</th>
             <th>Skapad</th>
             <th></th>
@@ -26,6 +27,17 @@
             <td>{{ product.name || '-' }}</td>
             <td>{{ product.category || '-' }}</td>
             <td>{{ product.model_variant || '-' }}</td>
+            <template v-for="vt in enabledValuationTypes" :key="vt.id">
+              <td class="text-sm">
+                <div v-if="valuationsByProduct[product.id]">
+                  <span v-if="getValuationForType(product.id, vt.id)" class="text-xs bg-slate-700 px-2 py-1 rounded">
+                    {{ formatValuationAsSEK(getValuationForType(product.id, vt.id)!.valuation) }}
+                  </span>
+                  <span v-else class="text-xs text-slate-400">-</span>
+                </div>
+                <div v-else class="text-xs text-slate-400">-</div>
+              </td>
+            </template>
             <td>
               <button
                 @click="toggleEnabled(product)"
@@ -94,11 +106,15 @@
 </template>
 
 <script setup lang="ts">
-import type { Product } from '~/types/database'
+import type { Product, Valuation, ValuationType } from '~/types/database'
 
 const api = useApi()
 
 const products = ref<Product[]>([])
+const valuationsByProduct = ref<Record<number, Valuation[]>>({})
+const valuationTypes = ref<ValuationType[]>([])
+
+const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.enabled !== false))
 const loading = ref(false)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
@@ -118,9 +134,52 @@ const form = ref({ ...defaultForm })
 const fetchData = async () => {
   loading.value = true
   try {
-    products.value = await api.get<Product[]>('/products')
-  } catch (e) {
-    console.error('Failed to fetch products:', e)
+    // Fetch products, valuations and valuation types. Use allSettled
+    // so the products list still appears even if auxiliary endpoints fail.
+    const [prodsRes, valsRes, typesRes] = await Promise.allSettled([
+      api.get<Product[]>('/products'),
+      api.get<Valuation[]>('/valuations'),
+      api.get<ValuationType[]>('/valuation-types')
+    ])
+
+    if (prodsRes.status === 'fulfilled') {
+      products.value = prodsRes.value
+    } else {
+      console.error('Failed to fetch products:', prodsRes.reason)
+      products.value = []
+    }
+
+    const grouped: Record<number, Valuation[]> = {}
+
+    // If the API returned a single bulk valuations response (legacy), use it.
+    if (valsRes && valsRes.status === 'fulfilled' && Array.isArray(valsRes.value) && valsRes.value.length > 0) {
+      ;(valsRes.value || []).forEach((v) => {
+        if (!v.product_id) return
+        const id = v.product_id as number
+        if (!grouped[id]) grouped[id] = []
+        grouped[id].push(v)
+      })
+    } else {
+      // Fallback: fetch valuations per product (API requires product_id)
+      if (products.value.length > 0) {
+        const perProductPromises = products.value.map(p => api.get<Valuation[]>(`/valuations?product_id=${p.id}`))
+        const perProductResults = await Promise.allSettled(perProductPromises)
+        perProductResults.forEach((res, idx) => {
+          const pid = products.value[idx].id
+          if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+            grouped[pid] = res.value
+          }
+        })
+      }
+    }
+    valuationsByProduct.value = grouped
+
+    if (typesRes.status === 'fulfilled' && Array.isArray(typesRes.value)) {
+      valuationTypes.value = typesRes.value
+    } else if (typesRes.status === 'rejected') {
+      console.warn('Failed to fetch valuation types:', typesRes.reason)
+      valuationTypes.value = []
+    }
   } finally {
     loading.value = false
   }
@@ -131,6 +190,11 @@ const formatDate = (dateStr?: string | null) => {
   const date = new Date(dateStr)
   if (isNaN(date.getTime())) return '-'
   return date.toLocaleDateString('sv-SE')
+}
+
+const formatValuationAsSEK = (sek: number | null | undefined) => {
+  if (sek === null || sek === undefined) return '-'
+  return sek.toLocaleString('sv-SE')
 }
 
 const formatEnabled = (enabled: boolean) => enabled ? 'Ja' : 'Nej'
@@ -175,6 +239,12 @@ const toggleEnabled = async (product: Product) => {
   } catch (e) {
     console.error('Failed to toggle enabled:', e)
   }
+}
+
+const getValuationForType = (productId: number, typeId: number) => {
+  const vals = valuationsByProduct.value[productId]
+  if (!vals) return null
+  return vals.find(v => v.valuation_type_id === typeId) || null
 }
 
 onMounted(fetchData)
