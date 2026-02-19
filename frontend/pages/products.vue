@@ -48,7 +48,7 @@
             <td>{{ product.category || '-' }}</td>
             <td>{{ product.model_variant || '-' }}</td>
             <template v-for="vt in enabledValuationTypes" :key="vt.id">
-              <td class="text-sm">
+              <td class="text-sm" :class="{ 'opacity-40': !isTypeActiveForProduct(product.id, vt.id) }">
                 <div v-if="valuationsByProduct[product.id]">
                   <template v-if="isEditingValuation(product.id, vt.id)">
                     <div class="flex items-center gap-2">
@@ -137,6 +137,26 @@
             </div>
           </div>
 
+          <div v-if="editingProduct && enabledValuationTypes.length > 0">
+            <label class="label">Aktiva värderingstyper</label>
+            <div class="flex flex-wrap gap-3">
+              <label
+                v-for="vt in enabledValuationTypes"
+                :key="vt.id"
+                class="flex items-center gap-2 cursor-pointer text-sm text-slate-300"
+              >
+                <input
+                  type="checkbox"
+                  :checked="editingValuationTypeActive[vt.id] ?? true"
+                  @change="editingValuationTypeActive[vt.id] = ($event.target as HTMLInputElement).checked"
+                  class="accent-primary-500"
+                />
+                {{ vt.name }}
+              </label>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Inaktiva typer exkluderas från sammanvägd värdering. Minst en måste vara aktiv.</p>
+          </div>
+
           <div class="flex justify-end gap-2 pt-4">
             <button type="button" @click="closeModal" class="btn btn-secondary">
               Avbryt
@@ -152,18 +172,22 @@
 </template>
 
 <script setup lang="ts">
-import type { Product, Valuation, ValuationType } from '~/types/database'
+import type { Product, Valuation, ValuationType, ProductValuationTypeConfig } from '~/types/database'
 
 const api = useApi()
 
 const products = ref<Product[]>([])
 const valuationsByProduct = ref<Record<number, Valuation[]>>({})
 const valuationTypes = ref<ValuationType[]>([])
+const valuationConfigsByProduct = ref<Record<number, ProductValuationTypeConfig[]>>({})
 
 const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.enabled !== false))
 const loading = ref(false)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
+
+// Per-product valuation type active states in edit form (typeId -> isActive)
+const editingValuationTypeActive = ref<Record<number, boolean>>({})
 
 // Weights for sammanvägd värdering (keyed by valuation type id, default 1)
 const weights = ref<Record<number, number>>({})
@@ -177,10 +201,19 @@ watch(valuationTypes, (types) => {
   })
 }, { immediate: true })
 
+// Check if a valuation type is active for a product (defaults to true when no config)
+const isTypeActiveForProduct = (productId: number, typeId: number): boolean => {
+  const configs = valuationConfigsByProduct.value[productId]
+  if (!configs || configs.length === 0) return true
+  const config = configs.find(c => c.valuation_type_id === typeId)
+  if (!config) return true
+  return config.is_active
+}
+
 const computeWeightedValuation = (productId: number): { average: number; safetyPercent: number } | null => {
-  const enabledTypes = enabledValuationTypes.value
-  if (enabledTypes.length === 0) return null
-  const entries = enabledTypes
+  const activeTypes = enabledValuationTypes.value.filter(vt => isTypeActiveForProduct(productId, vt.id))
+  if (activeTypes.length === 0) return null
+  const entries = activeTypes
     .map(vt => {
       const v = getValuationForType(productId, vt.id)
       return v !== null ? { valuation: v.valuation, weight: weights.value[vt.id] ?? 1 } : null
@@ -238,19 +271,31 @@ const fetchData = async () => {
     }
 
     const grouped: Record<number, Valuation[]> = {}
+    const configs: Record<number, ProductValuationTypeConfig[]> = {}
 
-    // Fetch valuations per product (server requires product_id)
+    // Fetch valuations and valuation type configs per product (server requires product_id)
     if (products.value.length > 0) {
       const perProductPromises = products.value.map(p => api.get<Valuation[]>(`/valuations?product_id=${p.id}`))
-      const perProductResults = await Promise.allSettled(perProductPromises)
+      const configPromises = products.value.map(p => api.get<ProductValuationTypeConfig[]>(`/products/${p.id}/valuation-type-config`))
+      const [perProductResults, configResults] = await Promise.all([
+        Promise.allSettled(perProductPromises),
+        Promise.allSettled(configPromises)
+      ])
       perProductResults.forEach((res, idx) => {
         const pid = products.value[idx].id
         if (res.status === 'fulfilled' && Array.isArray(res.value)) {
           grouped[pid] = res.value
         }
       })
+      configResults.forEach((res, idx) => {
+        const pid = products.value[idx].id
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          configs[pid] = res.value
+        }
+      })
     }
     valuationsByProduct.value = grouped
+    valuationConfigsByProduct.value = configs
 
     if (typesRes.status === 'fulfilled' && Array.isArray(typesRes.value)) {
       valuationTypes.value = typesRes.value
@@ -288,18 +333,39 @@ const editProduct = (product: Product) => {
     sell_postage_cost: product.sell_postage_cost,
     enabled: product.enabled ?? false
   }
+  // Initialize per-product valuation type active state
+  const activeMap: Record<number, boolean> = {}
+  enabledValuationTypes.value.forEach(vt => {
+    activeMap[vt.id] = isTypeActiveForProduct(product.id, vt.id)
+  })
+  editingValuationTypeActive.value = activeMap
 }
 
 const closeModal = () => {
   showAddModal.value = false
   editingProduct.value = null
   form.value = { ...defaultForm }
+  editingValuationTypeActive.value = {}
 }
 
 const saveProduct = async () => {
   try {
     if (editingProduct.value) {
       await api.put(`/products/${editingProduct.value.id}`, form.value)
+      // Save valuation type configs
+      if (enabledValuationTypes.value.length > 0) {
+        const activeCount = Object.values(editingValuationTypeActive.value).filter(Boolean).length
+        if (activeCount === 0) {
+          showSaveStatus('error', 'Minst en värderingstyp måste vara aktiv')
+          return
+        }
+        const configs: ProductValuationTypeConfig[] = enabledValuationTypes.value.map(vt => ({
+          product_id: editingProduct.value!.id,
+          valuation_type_id: vt.id,
+          is_active: editingValuationTypeActive.value[vt.id] ?? true
+        }))
+        await api.put(`/products/${editingProduct.value.id}/valuation-type-config`, { configs } as any)
+      }
     } else {
       await api.post('/products', form.value)
     }

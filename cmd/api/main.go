@@ -109,7 +109,7 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
-	})
+	})))
 	mux.HandleFunc("/api/fetch-ads/status/", server.fetchAdsStatusHandler)
 	mux.HandleFunc("/api/fetch-ads/logs/", server.fetchAdsLogsHandler)
 	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
@@ -419,7 +419,21 @@ func (s *Server) productsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
-	idStr := r.URL.Path[len("/api/products/"):]
+	pathSuffix := r.URL.Path[len("/api/products/"):]
+
+	// Route: /api/products/{id}/valuation-type-config
+	if strings.HasSuffix(pathSuffix, "/valuation-type-config") {
+		idStr := strings.TrimSuffix(pathSuffix, "/valuation-type-config")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			api.WriteBadRequest(w, "Invalid ID")
+			return
+		}
+		s.productValuationTypeConfigHandler(w, r, id)
+		return
+	}
+
+	idStr := pathSuffix
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		api.WriteBadRequest(w, "Invalid ID")
@@ -438,6 +452,51 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(product)
 	case "DELETE":
 		w.WriteHeader(204)
+	}
+}
+
+func (s *Server) productValuationTypeConfigHandler(w http.ResponseWriter, r *http.Request, productID int64) {
+	ctx := r.Context()
+	switch r.Method {
+	case "GET":
+		configs, err := s.db.GetProductValuationTypeConfigs(ctx, productID)
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if configs == nil {
+			configs = []models.ProductValuationTypeConfig{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(configs)
+	case "PUT":
+		var payload struct {
+			Configs []models.ProductValuationTypeConfig `json:"configs"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		configs := payload.Configs
+		// Validate at least one active type
+		activeCount := 0
+		for _, c := range configs {
+			if c.IsActive {
+				activeCount++
+			}
+		}
+		if len(configs) > 0 && activeCount == 0 {
+			api.WriteBadRequest(w, "Minst en värderingstyp måste vara aktiv")
+			return
+		}
+		if err := s.db.UpsertProductValuationTypeConfigs(ctx, productID, configs); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(configs)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
