@@ -272,6 +272,12 @@ func (p *Postgres) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction)`,
+		`CREATE TABLE IF NOT EXISTS product_valuation_type_config (
+			product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			valuation_type_id SMALLINT NOT NULL REFERENCES valuation_types(id) ON DELETE CASCADE,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			PRIMARY KEY (product_id, valuation_type_id)
+		)`,
 	}
 
 	for i, query := range queries {
@@ -927,6 +933,39 @@ func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationTyp
 		types = append(types, vt)
 	}
 	return types, rows.Err()
+}
+
+func (p *Postgres) GetProductValuationTypeConfigs(ctx context.Context, productID int64) ([]models.ProductValuationTypeConfig, error) {
+	query := `SELECT product_id, valuation_type_id, is_active FROM product_valuation_type_config WHERE product_id = $1`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []models.ProductValuationTypeConfig
+	for rows.Next() {
+		var c models.ProductValuationTypeConfig
+		if err := rows.Scan(&c.ProductID, &c.ValuationTypeID, &c.IsActive); err != nil {
+			return nil, err
+		}
+		configs = append(configs, c)
+	}
+	return configs, rows.Err()
+}
+
+func (p *Postgres) UpsertProductValuationTypeConfigs(ctx context.Context, productID int64, configs []models.ProductValuationTypeConfig) error {
+	for _, c := range configs {
+		query := `
+			INSERT INTO product_valuation_type_config (product_id, valuation_type_id, is_active)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (product_id, valuation_type_id) DO UPDATE SET is_active = EXCLUDED.is_active
+		`
+		if _, err := p.db.ExecContext(ctx, query, productID, c.ValuationTypeID, c.IsActive); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) GetValuationsByProductID(ctx context.Context, productID int64) ([]models.Valuation, error) {
