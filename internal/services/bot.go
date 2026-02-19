@@ -348,7 +348,6 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	listing := &models.Listing{
 		ProductID:       &productID,
 		Price:           &price,
-		Valuation:       compiledValuation,
 		Link:            ad.Link,
 		Title:           ad.Title,
 		Description:     &ad.AdText,
@@ -470,8 +469,16 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		minDiscount = *tradingRules.MinDiscount
 	}
 
-	profit := listing.Valuation - *listing.Price
-	discountPercent := float64(profit) / float64(listing.Valuation) * 100
+	// Use computed product-level valuation; fall back to listing.Valuation when DB is unavailable
+	computedValuation := listing.Valuation
+	if listing.ProductID != nil && s.database != nil {
+		if cv, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
+			computedValuation = cv
+		}
+	}
+
+	profit := computedValuation - *listing.Price
+	discountPercent := float64(profit) / float64(computedValuation) * 100
 
 	if profit <= minProfitSEK || discountPercent <= float64(minDiscount) {
 		s.log(LogLevelInfo, "Listing does not pass trading rules: profit=%d (>%d), discount=%.2f%% (>%d%%)",
@@ -496,11 +503,11 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		if listing.Price != nil {
 			priceStr = fmt.Sprintf("%d kr", *listing.Price)
 		}
-		profit := listing.Valuation
+		emailProfit := computedValuation
 		if listing.Price != nil {
-			profit = listing.Valuation - *listing.Price
+			emailProfit = computedValuation - *listing.Price
 		}
-		profitStr := fmt.Sprintf("%d kr", profit)
+		profitStr := fmt.Sprintf("%d kr", emailProfit)
 		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
 
 		desc := ""
@@ -540,7 +547,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		mailData := map[string]interface{}{
 			"Title":       listing.Title,
 			"Price":       priceStr,
-			"Valuation":   fmt.Sprintf("%d kr", listing.Valuation),
+			"Valuation":   fmt.Sprintf("%d kr", computedValuation),
 			"Profit":      profitStr,
 			"Discount":    discountStr,
 			"Description": desc,
