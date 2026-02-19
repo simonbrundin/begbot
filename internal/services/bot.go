@@ -540,7 +540,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		mailData := map[string]interface{}{
 			"Title":       listing.Title,
 			"Price":       priceStr,
-			"Valuation":   fmt.Sprintf("%d kr", listing.Valuation),
+			"Valuation":   fmt.Sprintf("%d kr (%s rabatt)", listing.Valuation, discountStr),
 			"Profit":      profitStr,
 			"Discount":    discountStr,
 			"Description": desc,
