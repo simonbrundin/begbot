@@ -33,7 +33,6 @@
             <th>Märke</th>
             <th>Namn</th>
             <th>Kategori</th>
-            <th>Variant</th>
             <th v-for="vt in enabledValuationTypes" :key="vt.id">{{ vt.name }}</th>
             <th>Sammanvägd värdering</th>
             <th>Aktiverad</th>
@@ -46,7 +45,6 @@
             <td class="font-medium text-slate-100">{{ product.brand || '-' }}</td>
             <td>{{ product.name || '-' }}</td>
             <td>{{ product.category || '-' }}</td>
-            <td>{{ product.model_variant || '-' }}</td>
             <template v-for="vt in enabledValuationTypes" :key="vt.id">
               <td class="text-sm" :class="{ 'opacity-40': !isTypeActiveForProduct(product.id, vt.id) }">
                 <div v-if="valuationsByProduct[product.id]">
