@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -23,12 +25,15 @@ const UserIDKey contextKey = "user_id"
 
 // JWK represents a JSON Web Key
 type JWK struct {
-	Kid string `json:"kid"`
-	Kty string `json:"kty"`
-	Alg string `json:"alg"`
-	Use string `json:"use"`
-	N   string `json:"n"`
-	E   string `json:"e"`
+	Kid   string `json:"kid"`
+	Kty   string `json:"kty"`
+	Alg   string `json:"alg"`
+	Use   string `json:"use"`
+	N     string `json:"n"`
+	E     string `json:"e"`
+	X     string `json:"x"`
+	Y     string `json:"y"`
+	Curve string `json:"crv"`
 }
 
 // JWKS represents a JSON Web Key Set
@@ -46,22 +51,26 @@ type SupabaseClaims struct {
 
 // AuthMiddleware handles Supabase JWT authentication
 type AuthMiddleware struct {
-	supabaseURL string
-	jwksURL     string
-	publicKeys  map[string]*rsa.PublicKey
-	mu          sync.RWMutex
+	supabaseURL     string
+	supabaseAnonKey string
+	jwksURL         string
+	rsaPublicKeys   map[string]*rsa.PublicKey
+	ecdsaPublicKeys map[string]*ecdsa.PublicKey
+	mu              sync.RWMutex
 }
 
 // NewAuthMiddleware creates a new authentication middleware
-func NewAuthMiddleware(supabaseURL string) *AuthMiddleware {
+func NewAuthMiddleware(supabaseURL, supabaseAnonKey string) *AuthMiddleware {
 	if supabaseURL == "" {
-		supabaseURL = "https://fxhknzpqqhrkpqothjvrx.supabase.co"
+		supabaseURL = "https://fxhknzpqhrkpqothjvrx.supabase.co"
 	}
-	
+
 	return &AuthMiddleware{
-		supabaseURL: supabaseURL,
-		jwksURL:     fmt.Sprintf("%s/auth/v1/jwks", supabaseURL),
-		publicKeys:  make(map[string]*rsa.PublicKey),
+		supabaseURL:     supabaseURL,
+		supabaseAnonKey: supabaseAnonKey,
+		jwksURL:         fmt.Sprintf("%s/auth/v1/.well-known/jwks.json", supabaseURL),
+		rsaPublicKeys:   make(map[string]*rsa.PublicKey),
+		ecdsaPublicKeys: make(map[string]*ecdsa.PublicKey),
 	}
 }
 
@@ -99,26 +108,24 @@ func (am *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 
 // ValidateToken validates a JWT token and returns the claims
 func (am *AuthMiddleware) ValidateToken(tokenString string) (*SupabaseClaims, error) {
-	// Parse token without verification first to get the kid
-	token, err := jwt.ParseWithClaims(tokenString, &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
-		// Verify signing method
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
+	var signingMethod jwt.SigningMethod
 
-		// Get kid from token header
+	token, err := jwt.ParseWithClaims(tokenString, &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
+		signingMethod = token.Method
+
 		kid, ok := token.Header["kid"].(string)
 		if !ok {
 			return nil, errors.New("missing kid in token header")
 		}
 
-		// Get public key for this kid
-		publicKey, err := am.getPublicKey(kid)
-		if err != nil {
-			return nil, err
+		switch token.Method {
+		case jwt.SigningMethodRS256, jwt.SigningMethodRS384, jwt.SigningMethodRS512:
+			return am.getRSAPublicKey(kid)
+		case jwt.SigningMethodES256, jwt.SigningMethodES384, jwt.SigningMethodES512:
+			return am.getECDSAPublicKey(kid)
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-
-		return publicKey, nil
 	})
 
 	if err != nil {
@@ -134,31 +141,89 @@ func (am *AuthMiddleware) ValidateToken(tokenString string) (*SupabaseClaims, er
 		return nil, errors.New("invalid claims type")
 	}
 
+	_ = signingMethod
 	return claims, nil
 }
 
-// getPublicKey retrieves the public key for a given kid
-func (am *AuthMiddleware) getPublicKey(kid string) (*rsa.PublicKey, error) {
-	// Check if we already have this key
+// getRSAPublicKey retrieves the RSA public key for a given kid
+func (am *AuthMiddleware) getRSAPublicKey(kid string) (*rsa.PublicKey, error) {
 	am.mu.RLock()
-	if key, exists := am.publicKeys[kid]; exists {
+	if key, exists := am.rsaPublicKeys[kid]; exists {
 		am.mu.RUnlock()
 		return key, nil
 	}
 	am.mu.RUnlock()
 
-	// Fetch JWKS
 	am.mu.Lock()
 	defer am.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if key, exists := am.publicKeys[kid]; exists {
+	if key, exists := am.rsaPublicKeys[kid]; exists {
 		return key, nil
 	}
 
-	// Fetch JWKS from Supabase
+	keys, err := am.fetchJWKS()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, key := range keys {
+		if key.Kid == kid && key.Kty == "RSA" {
+			publicKey, err := jwkToRSAPublicKey(&key)
+			if err != nil {
+				return nil, err
+			}
+			am.rsaPublicKeys[kid] = publicKey
+			return publicKey, nil
+		}
+	}
+
+	return nil, fmt.Errorf("RSA key with kid %s not found in JWKS", kid)
+}
+
+// getECDSAPublicKey retrieves the ECDSA public key for a given kid
+func (am *AuthMiddleware) getECDSAPublicKey(kid string) (*ecdsa.PublicKey, error) {
+	am.mu.RLock()
+	if key, exists := am.ecdsaPublicKeys[kid]; exists {
+		am.mu.RUnlock()
+		return key, nil
+	}
+	am.mu.RUnlock()
+
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	if key, exists := am.ecdsaPublicKeys[kid]; exists {
+		return key, nil
+	}
+
+	keys, err := am.fetchJWKS()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, key := range keys {
+		if key.Kid == kid && key.Kty == "EC" {
+			publicKey, err := jwkToECDSAPublicKey(&key)
+			if err != nil {
+				return nil, err
+			}
+			am.ecdsaPublicKeys[kid] = publicKey
+			return publicKey, nil
+		}
+	}
+
+	return nil, fmt.Errorf("EC key with kid %s not found in JWKS", kid)
+}
+
+// fetchJWKS fetches and parses the JWKS from Supabase
+func (am *AuthMiddleware) fetchJWKS() ([]JWK, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(am.jwksURL)
+	req, err := http.NewRequest("GET", am.jwksURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWKS request: %w", err)
+	}
+	req.Header.Set("apikey", am.supabaseAnonKey)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
@@ -178,29 +243,7 @@ func (am *AuthMiddleware) getPublicKey(kid string) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("failed to parse JWKS: %w", err)
 	}
 
-	// Find the key with matching kid
-	var targetJWK *JWK
-	for i, key := range jwks.Keys {
-		if key.Kid == kid {
-			targetJWK = &jwks.Keys[i]
-			break
-		}
-	}
-
-	if targetJWK == nil {
-		return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
-	}
-
-	// Convert JWK to RSA public key
-	publicKey, err := jwkToRSAPublicKey(targetJWK)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert JWK to RSA public key: %w", err)
-	}
-
-	// Cache the key
-	am.publicKeys[kid] = publicKey
-
-	return publicKey, nil
+	return jwks.Keys, nil
 }
 
 // jwkToRSAPublicKey converts a JWK to an RSA public key
@@ -219,7 +262,7 @@ func jwkToRSAPublicKey(jwk *JWK) (*rsa.PublicKey, error) {
 
 	// Convert to big.Int
 	n := new(big.Int).SetBytes(nBytes)
-	
+
 	// Convert exponent bytes to int
 	var e int
 	for _, b := range eBytes {
@@ -229,6 +272,37 @@ func jwkToRSAPublicKey(jwk *JWK) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{
 		N: n,
 		E: e,
+	}, nil
+}
+
+// jwkToECDSAPublicKey converts a JWK to an ECDSA public key
+func jwkToECDSAPublicKey(jwk *JWK) (*ecdsa.PublicKey, error) {
+	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode X: %w", err)
+	}
+
+	yBytes, err := base64.RawURLEncoding.DecodeString(jwk.Y)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode Y: %w", err)
+	}
+
+	var curve elliptic.Curve
+	switch jwk.Curve {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("unsupported curve: %s", jwk.Curve)
+	}
+
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     new(big.Int).SetBytes(xBytes),
+		Y:     new(big.Int).SetBytes(yBytes),
 	}, nil
 }
 

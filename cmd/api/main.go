@@ -85,15 +85,16 @@ func main() {
 	// Initialize auth middleware
 	supabaseURL := os.Getenv("SUPABASE_URL")
 	if supabaseURL == "" {
-		supabaseURL = "https://fxhknzpqqhrkpqothjvrx.supabase.co"
+		supabaseURL = "https://fxhknzpqhrkpqothjvrx.supabase.co"
 	}
-	authMiddleware := auth.NewAuthMiddleware(supabaseURL)
+	supabaseAnonKey := os.Getenv("SUPABASE_KEY")
+	authMiddleware := auth.NewAuthMiddleware(supabaseURL, supabaseAnonKey)
 
 	mux := http.NewServeMux()
-	
+
 	// Health endpoint - no auth required
 	mux.HandleFunc("/api/health", server.healthHandler)
-	
+
 	// Protected endpoints - wrapped with auth middleware
 	mux.Handle("/api/inventory", authMiddleware.Middleware(http.HandlerFunc(server.inventoryHandler)))
 	mux.Handle("/api/inventory/", authMiddleware.Middleware(http.HandlerFunc(server.inventoryItemHandler)))
@@ -127,7 +128,7 @@ func main() {
 	headers := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && (strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1")) {
+			if origin != "" && isLocalOrigin(origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 			} else {
 				w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
@@ -1324,21 +1325,21 @@ func (s *Server) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getConversations(w http.ResponseWriter, r *http.Request) {
 	needsReview := r.URL.Query().Get("needs_review") == "true"
-	
+
 	var conversations []models.ConversationWithDetails
 	var err error
-	
+
 	if needsReview {
 		conversations, err = s.db.GetConversationsNeedingReview(r.Context())
 	} else {
 		conversations, err = s.db.GetAllConversations(r.Context())
 	}
-	
+
 	if err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	json.NewEncoder(w).Encode(conversations)
 }
 
@@ -1347,19 +1348,19 @@ func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {
 		ListingID     int64 `json:"listing_id"`
 		MarketplaceID int64 `json:"marketplace_id"`
 	}
-	
+
 	var req CreateConversationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 		return
 	}
-	
+
 	conv, err := s.messagingService.CreateConversation(r.Context(), req.ListingID, req.MarketplaceID)
 	if err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(conv)
 }
@@ -1367,18 +1368,18 @@ func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) conversationItemHandler(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
 	parts := strings.Split(idStr, "/")
-	
+
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "id", Message: "invalid ID"}})
 		return
 	}
-	
+
 	if len(parts) > 1 && parts[1] == "messages" {
 		s.getConversationMessages(w, r, id)
 		return
 	}
-	
+
 	switch r.Method {
 	case "GET":
 		s.getConversation(w, r, id)
@@ -1406,18 +1407,18 @@ func (s *Server) updateConversation(w http.ResponseWriter, r *http.Request, id i
 	type UpdateConversationRequest struct {
 		Status string `json:"status"`
 	}
-	
+
 	var req UpdateConversationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 		return
 	}
-	
+
 	if err := s.db.UpdateConversationStatus(r.Context(), id, req.Status); err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	api.WriteSuccess(w, map[string]interface{}{"status": "updated"})
 }
 
@@ -1447,16 +1448,16 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 		MessageType    string `json:"message_type"` // "initial", "reply", or "incoming"
 		Content        string `json:"content,omitempty"`
 	}
-	
+
 	var req CreateMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 		return
 	}
-	
+
 	var msg *models.Message
 	var err error
-	
+
 	switch req.MessageType {
 	case "initial":
 		if req.ListingID == nil {
@@ -1464,31 +1465,31 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		msg, err = s.messagingService.GenerateInitialMessage(r.Context(), *req.ListingID)
-		
+
 	case "reply":
 		if req.ConversationID == nil {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "conversation_id", Message: "required for reply messages"}})
 			return
 		}
 		msg, err = s.messagingService.GenerateReplyMessage(r.Context(), *req.ConversationID)
-		
+
 	case "incoming":
 		if req.ConversationID == nil || req.Content == "" {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "conversation_id", Message: "required"}, {Field: "content", Message: "required"}})
 			return
 		}
 		msg, err = s.messagingService.ReceiveMessage(r.Context(), *req.ConversationID, req.Content)
-		
+
 	default:
 		api.WriteValidationError(w, []api.ValidationError{{Field: "message_type", Message: "must be 'initial', 'reply', or 'incoming'"}})
 		return
 	}
-	
+
 	if err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	w.WriteHeader(201)
 	json.NewEncoder(w).Encode(msg)
 }
@@ -1496,13 +1497,13 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) messageItemHandler(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/messages/")
 	parts := strings.Split(idStr, "/")
-	
+
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "id", Message: "invalid ID"}})
 		return
 	}
-	
+
 	if len(parts) > 1 {
 		action := parts[1]
 		switch action {
@@ -1514,7 +1515,7 @@ func (s *Server) messageItemHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
+
 	switch r.Method {
 	case "GET":
 		s.getMessage(w, r, id)
@@ -1542,18 +1543,18 @@ func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, id int64)
 	type UpdateMessageRequest struct {
 		Content string `json:"content"`
 	}
-	
+
 	var req UpdateMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 		return
 	}
-	
+
 	if err := s.db.UpdateMessageContent(r.Context(), id, req.Content); err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	api.WriteSuccess(w, map[string]interface{}{"status": "updated"})
 }
 
@@ -1562,12 +1563,12 @@ func (s *Server) approveMessage(w http.ResponseWriter, r *http.Request, id int64
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 		return
 	}
-	
+
 	if err := s.db.ApproveMessage(r.Context(), id); err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	api.WriteSuccess(w, map[string]interface{}{"status": "approved"})
 }
 
@@ -1576,13 +1577,27 @@ func (s *Server) rejectMessage(w http.ResponseWriter, r *http.Request, id int64)
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 		return
 	}
-	
+
 	if err := s.db.RejectMessage(r.Context(), id); err != nil {
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	
+
 	api.WriteSuccess(w, map[string]interface{}{"status": "rejected"})
+}
+
+// isLocalOrigin returns true for origins from localhost or private network IPs,
+// which is needed when dev.nu opens the browser via the LAN IP.
+func isLocalOrigin(origin string) bool {
+	host := strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://")
+	if i := strings.LastIndex(host, ":"); i != -1 {
+		host = host[:i]
+	}
+	return host == "localhost" ||
+		strings.HasPrefix(host, "127.") ||
+		strings.HasPrefix(host, "192.168.") ||
+		strings.HasPrefix(host, "10.") ||
+		strings.HasPrefix(host, "172.")
 }
 
 var _ = context.Background

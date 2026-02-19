@@ -9,6 +9,15 @@ frontend/.output/
 frontend/node_modules/
 .todos/
 
+# Compiled binaries
+/api
+/api-new
+/tmp/main
+tmp/
+
+# Dev server per-worktree env
+.dev.env
+
 # Sidecar worktree state files
 .sidecar/
 .sidecar-agent

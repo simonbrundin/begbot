@@ -200,12 +200,12 @@ type ScrapingRun struct {
 }
 
 type Conversation struct {
-	ID            int64      `json:"id" db:"id"`
-	ListingID     int64      `json:"listing_id" db:"listing_id"`
-	MarketplaceID int64      `json:"marketplace_id" db:"marketplace_id"`
-	Status        string     `json:"status" db:"status"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	ID            int64     `json:"id" db:"id"`
+	ListingID     int64     `json:"listing_id" db:"listing_id"`
+	MarketplaceID int64     `json:"marketplace_id" db:"marketplace_id"`
+	Status        string    `json:"status" db:"status"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at" db:"updated_at"`
 }
 
 type Message struct {

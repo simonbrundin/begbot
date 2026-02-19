@@ -24,17 +24,17 @@ func NewMessagingService(cfg *config.Config, database *db.Postgres, llmService *
 }
 
 type MessageGenerationInput struct {
-	ListingTitle       string
-	ListingDescription string
-	ListingPrice       int
-	Valuation          int
+	ListingTitle        string
+	ListingDescription  string
+	ListingPrice        int
+	Valuation           int
 	ConversationHistory []models.Message
-	MessageType        string // "initial" or "reply"
+	MessageType         string // "initial" or "reply"
 }
 
 func (s *MessagingService) GenerateMessage(ctx context.Context, input MessageGenerationInput) (string, error) {
 	var prompt string
-	
+
 	if input.MessageType == "initial" {
 		prompt = s.buildInitialMessagePrompt(input)
 	} else {
@@ -42,7 +42,7 @@ func (s *MessagingService) GenerateMessage(ctx context.Context, input MessageGen
 	}
 
 	model := s.llmService.client.GetModel("GenerateMessage", s.llmService.defaultModel, s.llmService.models)
-	
+
 	content, err := s.llmService.client.Chat(ctx, model, prompt)
 	if err != nil {
 		return "", fmt.Errorf("LLM API error: %w", err)
@@ -69,7 +69,7 @@ Meddelandet ska:
 - Fråga om varan fortfarande är till salu
 - Eventuellt ställa en relevant fråga om skick eller användning
 
-Returnera ENDAST meddelandet, ingen extra text eller förklaring.`, 
+Returnera ENDAST meddelandet, ingen extra text eller förklaring.`,
 		input.ListingTitle,
 		input.ListingPrice,
 		input.ListingDescription,
@@ -163,7 +163,7 @@ func (s *MessagingService) GenerateInitialMessage(ctx context.Context, listingID
 	if listing.Description != nil {
 		description = *listing.Description
 	}
-	
+
 	price := 0
 	if listing.Price != nil {
 		price = *listing.Price
@@ -227,7 +227,7 @@ func (s *MessagingService) GenerateReplyMessage(ctx context.Context, conversatio
 	if listing.Description != nil {
 		description = *listing.Description
 	}
-	
+
 	price := 0
 	if listing.Price != nil {
 		price = *listing.Price

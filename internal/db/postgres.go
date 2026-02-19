@@ -397,12 +397,12 @@ func (p *Postgres) GetSoldTradedItems(ctx context.Context, limit int) ([]models.
 
 func (p *Postgres) SaveListing(ctx context.Context, listing *models.Listing) error {
 	query := `
-		INSERT INTO listings (product_id, price, valuation, link, condition_id, shipping_cost, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id
 	`
 	return p.db.QueryRowContext(ctx, query,
-		listing.ProductID, listing.Price, listing.Valuation, listing.Link, listing.ConditionID, listing.ShippingCost,
+		listing.ProductID, listing.Price, listing.Link, listing.ConditionID, listing.ShippingCost,
 		listing.Title, listToNullString(listing.Description), listing.MarketplaceID, listing.Status, listing.PublicationDate, listing.SoldDate, listing.IsMyListing,
 		listing.EligibleForShipping, listing.SellerPaysShipping, listing.BuyNow,
 	).Scan(&listing.ID)
@@ -861,7 +861,7 @@ func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, 
 
 func (p *Postgres) GetAllListings(ctx context.Context) ([]models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+		SELECT id, product_id, price, link, condition_id, shipping_cost, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings
@@ -878,7 +878,7 @@ func (p *Postgres) GetAllListings(ctx context.Context) ([]models.Listing, error)
 		var listing models.Listing
 		var title, description sql.NullString
 		err := rows.Scan(
-			&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
+			&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
 			&listing.ShippingCost, &title, &description, &listing.MarketplaceID, &listing.Status,
 			&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
 			&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
@@ -1102,14 +1102,14 @@ func (p *Postgres) GetValuationsForListing(ctx context.Context, listingID int64)
 
 func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+		SELECT id, product_id, price, link, condition_id, shipping_cost, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings WHERE id = $1
 	`
 	var listing models.Listing
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
+		&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
 		&listing.ShippingCost, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
 		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
