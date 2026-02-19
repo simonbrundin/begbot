@@ -39,6 +39,7 @@ type ScrapingConfig struct {
 type TraderaConfig struct {
 	Enabled bool          `yaml:"enabled"`
 	Timeout time.Duration `yaml:"timeout"`
+	BaseURL string        `yaml:"base_url"`
 }
 
 type BlocketConfig struct {

@@ -4,6 +4,7 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss',
     '@nuxtjs/supabase',
     '@pinia/nuxt',
+    '@nuxt/icon',
     '@nuxt/test-utils/module'
   ],
   supabase: {

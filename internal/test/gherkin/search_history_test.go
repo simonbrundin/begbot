@@ -1,3 +1,6 @@
+//go:build gherkin
+// +build gherkin
+
 package gherkin
 
 import (
@@ -51,13 +54,13 @@ func (m *mockSearchHistoryDB) GetSearchHistoryCount(ctx context.Context) (int, e
 
 // TestContext holds state for BDD tests
 type searchHistoryTestContext struct {
-	service    *services.SearchHistoryService
-	mockDB     *mockSearchHistoryDB
-	ctx        context.Context
-	result     *models.SearchHistory
-	history    []models.SearchHistory
-	count      int
-	err        error
+	service *services.SearchHistoryService
+	mockDB  *mockSearchHistoryDB
+	ctx     context.Context
+	result  *models.SearchHistory
+	history []models.SearchHistory
+	count   int
+	err     error
 }
 
 // InitializeSearchHistoryScenario initializes the test context
@@ -140,12 +143,12 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 		tc.mockDB.history = make([]models.SearchHistory, count)
 		for i := 0; i < count; i++ {
 			tc.mockDB.history[i] = models.SearchHistory{
-				ID:              int64(i + 1),
-				SearchTermID:    int64(i + 1),
-				SearchTermDesc:  "Item " + string(rune('1'+i)),
-				ResultsFound:    10,
-				NewAdsFound:     1,
-				SearchedAt:      now,
+				ID:             int64(i + 1),
+				SearchTermID:   int64(i + 1),
+				SearchTermDesc: "Item " + string(rune('1'+i)),
+				ResultsFound:   10,
+				NewAdsFound:    1,
+				SearchedAt:     now,
 			}
 		}
 		return nil

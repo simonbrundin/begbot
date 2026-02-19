@@ -6,8 +6,9 @@ export interface Product {
   model_variant: string | null
   sell_packaging_cost: number
   sell_postage_cost: number
-  enabled: boolean
-  created_at: string
+  new_price?: number | null
+  enabled?: boolean | null
+  created_at?: string | null
 }
 
 export interface TradedItem {
@@ -111,6 +112,31 @@ export interface SearchTermWithCriteria {
   criteria: SearchCriteria[]
 }
 
+export interface SearchHistory {
+  id: number
+  search_term_id: number
+  search_term_desc: string
+  url: string
+  results_found: number
+  new_ads_found: number
+  marketplace_id: number | null
+  marketplace_name: string
+  searched_at: string
+  created_at: string
+}
+
+export interface ScrapingRun {
+  id: number
+  started_at: string
+  completed_at: string | null
+  status: string
+  total_ads_found: number
+  total_listings_saved: number
+  total_good_buys: number
+  error_message: string | null
+  created_at: string
+}
+
 export interface Valuation {
   id: number
   product_id: number | null
@@ -119,6 +145,12 @@ export interface Valuation {
   valuation: number
   metadata: any
   created_at: string
+}
+
+export interface ValuationType {
+  id: number
+  name: string
+  enabled?: boolean | null
 }
 
 export interface ListingWithDetails {

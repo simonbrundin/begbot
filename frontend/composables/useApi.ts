@@ -14,9 +14,10 @@ export const useApi = () => {
 
   const fetch = async <T>(endpoint: string, options?: ApiOptions): Promise<T> => {
     const url = `${apiBase}/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`
-    
+    console.debug('useApi request', { url, method: options?.method || 'GET', body: options?.body })
+
     loadingStore.startLoading()
-    
+
     try {
       // Get the current session token
       const { data: { session } } = await client.auth.getSession()
@@ -31,7 +32,11 @@ export const useApi = () => {
         body: options?.body,
         headers
       })
+      console.debug('useApi response', { url, result })
       return result
+    } catch (err) {
+      console.error('useApi error', { url, err })
+      throw err
     } finally {
       loadingStore.stopLoading()
     }
