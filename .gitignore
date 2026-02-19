@@ -17,3 +17,6 @@ frontend/node_modules/
 .sidecar-start.sh
 .sidecar-base
 .td-root
+
+# VS Code workspace settings (local)
+/.vscode/settings.json
