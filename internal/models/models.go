@@ -192,3 +192,32 @@ type ScrapingRun struct {
 	ErrorMessage       *string    `json:"error_message,omitempty" db:"error_message"`
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 }
+
+type Conversation struct {
+	ID            int64      `json:"id" db:"id"`
+	ListingID     int64      `json:"listing_id" db:"listing_id"`
+	MarketplaceID int64      `json:"marketplace_id" db:"marketplace_id"`
+	Status        string     `json:"status" db:"status"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+type Message struct {
+	ID             int64      `json:"id" db:"id"`
+	ConversationID int64      `json:"conversation_id" db:"conversation_id"`
+	Direction      string     `json:"direction" db:"direction"`
+	Content        string     `json:"content" db:"content"`
+	Status         string     `json:"status" db:"status"`
+	ApprovedAt     *time.Time `json:"approved_at,omitempty" db:"approved_at"`
+	SentAt         *time.Time `json:"sent_at,omitempty" db:"sent_at"`
+	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+type ConversationWithDetails struct {
+	Conversation
+	ListingTitle    string `json:"listing_title"`
+	ListingPrice    *int   `json:"listing_price,omitempty"`
+	MarketplaceName string `json:"marketplace_name"`
+	PendingCount    int    `json:"pending_count"`
+}

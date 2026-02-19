@@ -40,6 +40,7 @@ type Server struct {
 	jobService           *services.JobService
 	searchHistoryService *services.SearchHistoryService
 	scheduler            *services.Scheduler
+	messagingService     *services.MessagingService
 }
 
 func main() {
@@ -66,13 +67,20 @@ func main() {
 	llmService := services.NewLLMService(cfg)
 	valuationService := services.NewValuationService(cfg, database, llmService)
 	botService := services.NewBotService(cfg, marketplaceService, cacheService, llmService, valuationService, database)
+	messagingService := services.NewMessagingService(cfg, database, llmService)
 
 	scheduler := services.NewScheduler(database, cfg, botService)
 	if err := scheduler.Start(context.Background()); err != nil {
 		logger.Printf("Warning: Failed to start scheduler: %v", err)
 	}
 
-	server := &Server{db: database, jobService: services.NewJobService(), searchHistoryService: services.NewSearchHistoryService(database), scheduler: scheduler}
+	server := &Server{
+		db:                   database,
+		jobService:           services.NewJobService(),
+		searchHistoryService: services.NewSearchHistoryService(database),
+		scheduler:            scheduler,
+		messagingService:     messagingService,
+	}
 
 	// Initialize auth middleware
 	supabaseURL := os.Getenv("SUPABASE_URL")
@@ -101,14 +109,20 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
-	})))
-	mux.Handle("/api/fetch-ads/status/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsStatusHandler)))
-	mux.Handle("/api/fetch-ads/logs/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsLogsHandler)))
-	mux.Handle("/api/fetch-ads/cancel/", authMiddleware.Middleware(http.HandlerFunc(server.fetchAdsCancelHandler)))
-	mux.Handle("/api/valuation-types", authMiddleware.Middleware(http.HandlerFunc(server.valuationTypesHandler)))
-	mux.Handle("/api/valuations", authMiddleware.Middleware(http.HandlerFunc(server.valuationsHandler)))
-	mux.Handle("/api/valuations/collect", authMiddleware.Middleware(http.HandlerFunc(server.collectValuationsHandler)))
-	mux.Handle("/api/valuations/compiled", authMiddleware.Middleware(http.HandlerFunc(server.compiledValuationsHandler)))
+	})
+	mux.HandleFunc("/api/fetch-ads/status/", server.fetchAdsStatusHandler)
+	mux.HandleFunc("/api/fetch-ads/logs/", server.fetchAdsLogsHandler)
+	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
+	mux.HandleFunc("/api/valuation-types", server.valuationTypesHandler)
+	mux.HandleFunc("/api/valuations", server.valuationsHandler)
+	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
+	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
+	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
+	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
+	mux.HandleFunc("/api/conversations", server.conversationsHandler)
+	mux.HandleFunc("/api/conversations/", server.conversationItemHandler)
+	mux.HandleFunc("/api/messages", server.messagesHandler)
+	mux.HandleFunc("/api/messages/", server.messageItemHandler)
 
 	headers := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1235,6 +1249,281 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 		"message":    "Valuation collection not fully implemented in API yet",
 		"product_id": req.ProductID,
 	})
+}
+
+// Conversation handlers
+func (s *Server) conversationsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.getConversations(w, r)
+	case "POST":
+		s.createConversation(w, r)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) getConversations(w http.ResponseWriter, r *http.Request) {
+	needsReview := r.URL.Query().Get("needs_review") == "true"
+	
+	var conversations []models.ConversationWithDetails
+	var err error
+	
+	if needsReview {
+		conversations, err = s.db.GetConversationsNeedingReview(r.Context())
+	} else {
+		conversations, err = s.db.GetAllConversations(r.Context())
+	}
+	
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	json.NewEncoder(w).Encode(conversations)
+}
+
+func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {
+	type CreateConversationRequest struct {
+		ListingID     int64 `json:"listing_id"`
+		MarketplaceID int64 `json:"marketplace_id"`
+	}
+	
+	var req CreateConversationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+		return
+	}
+	
+	conv, err := s.messagingService.CreateConversation(r.Context(), req.ListingID, req.MarketplaceID)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	w.WriteHeader(201)
+	json.NewEncoder(w).Encode(conv)
+}
+
+func (s *Server) conversationItemHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	parts := strings.Split(idStr, "/")
+	
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "id", Message: "invalid ID"}})
+		return
+	}
+	
+	if len(parts) > 1 && parts[1] == "messages" {
+		s.getConversationMessages(w, r, id)
+		return
+	}
+	
+	switch r.Method {
+	case "GET":
+		s.getConversation(w, r, id)
+	case "PUT":
+		s.updateConversation(w, r, id)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) getConversation(w http.ResponseWriter, r *http.Request, id int64) {
+	conv, err := s.db.GetConversationByID(r.Context(), id)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	if conv == nil {
+		api.WriteError(w, "Conversation not found", "NOT_FOUND", 404)
+		return
+	}
+	json.NewEncoder(w).Encode(conv)
+}
+
+func (s *Server) updateConversation(w http.ResponseWriter, r *http.Request, id int64) {
+	type UpdateConversationRequest struct {
+		Status string `json:"status"`
+	}
+	
+	var req UpdateConversationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+		return
+	}
+	
+	if err := s.db.UpdateConversationStatus(r.Context(), id, req.Status); err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	api.WriteSuccess(w, map[string]interface{}{"status": "updated"})
+}
+
+func (s *Server) getConversationMessages(w http.ResponseWriter, r *http.Request, conversationID int64) {
+	messages, err := s.db.GetMessagesByConversationID(r.Context(), conversationID)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	json.NewEncoder(w).Encode(messages)
+}
+
+// Message handlers
+func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		s.createMessage(w, r)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) createMessage(w http.ResponseWriter, r *http.Request) {
+	type CreateMessageRequest struct {
+		ListingID      *int64 `json:"listing_id,omitempty"`
+		ConversationID *int64 `json:"conversation_id,omitempty"`
+		MessageType    string `json:"message_type"` // "initial", "reply", or "incoming"
+		Content        string `json:"content,omitempty"`
+	}
+	
+	var req CreateMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+		return
+	}
+	
+	var msg *models.Message
+	var err error
+	
+	switch req.MessageType {
+	case "initial":
+		if req.ListingID == nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "listing_id", Message: "required for initial messages"}})
+			return
+		}
+		msg, err = s.messagingService.GenerateInitialMessage(r.Context(), *req.ListingID)
+		
+	case "reply":
+		if req.ConversationID == nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "conversation_id", Message: "required for reply messages"}})
+			return
+		}
+		msg, err = s.messagingService.GenerateReplyMessage(r.Context(), *req.ConversationID)
+		
+	case "incoming":
+		if req.ConversationID == nil || req.Content == "" {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "conversation_id", Message: "required"}, {Field: "content", Message: "required"}})
+			return
+		}
+		msg, err = s.messagingService.ReceiveMessage(r.Context(), *req.ConversationID, req.Content)
+		
+	default:
+		api.WriteValidationError(w, []api.ValidationError{{Field: "message_type", Message: "must be 'initial', 'reply', or 'incoming'"}})
+		return
+	}
+	
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	w.WriteHeader(201)
+	json.NewEncoder(w).Encode(msg)
+}
+
+func (s *Server) messageItemHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/messages/")
+	parts := strings.Split(idStr, "/")
+	
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "id", Message: "invalid ID"}})
+		return
+	}
+	
+	if len(parts) > 1 {
+		action := parts[1]
+		switch action {
+		case "approve":
+			s.approveMessage(w, r, id)
+			return
+		case "reject":
+			s.rejectMessage(w, r, id)
+			return
+		}
+	}
+	
+	switch r.Method {
+	case "GET":
+		s.getMessage(w, r, id)
+	case "PUT":
+		s.updateMessage(w, r, id)
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) getMessage(w http.ResponseWriter, r *http.Request, id int64) {
+	msg, err := s.db.GetMessageByID(r.Context(), id)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	if msg == nil {
+		api.WriteError(w, "Message not found", "NOT_FOUND", 404)
+		return
+	}
+	json.NewEncoder(w).Encode(msg)
+}
+
+func (s *Server) updateMessage(w http.ResponseWriter, r *http.Request, id int64) {
+	type UpdateMessageRequest struct {
+		Content string `json:"content"`
+	}
+	
+	var req UpdateMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+		return
+	}
+	
+	if err := s.db.UpdateMessageContent(r.Context(), id, req.Content); err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	api.WriteSuccess(w, map[string]interface{}{"status": "updated"})
+}
+
+func (s *Server) approveMessage(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != "POST" && r.Method != "PUT" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+	
+	if err := s.db.ApproveMessage(r.Context(), id); err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	api.WriteSuccess(w, map[string]interface{}{"status": "approved"})
+}
+
+func (s *Server) rejectMessage(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != "POST" && r.Method != "PUT" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+	
+	if err := s.db.RejectMessage(r.Context(), id); err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	
+	api.WriteSuccess(w, map[string]interface{}{"status": "rejected"})
 }
 
 var _ = context.Background

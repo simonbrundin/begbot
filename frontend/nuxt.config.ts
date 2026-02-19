@@ -4,15 +4,14 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss',
     '@nuxtjs/supabase',
     '@pinia/nuxt',
-    '@nuxt/icon',
-    '@nuxt/test-utils/module'
+    '@nuxt/icon'
   ],
   supabase: {
     redirect: false,
     redirectOptions: {
       login: '/login',
       callback: '/confirm',
-      exclude: ['/', '/listings', '/products', '/transactions', '/analytics', '/scraping', '/ads']
+      exclude: ['/', '/listings', '/products', '/transactions', '/analytics', '/scraping', '/ads', '/conversations']
     }
   },
   css: ['~/assets/css/main.css'],
