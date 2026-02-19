@@ -270,8 +270,8 @@ const errorMessage = computed(() => {
                 <p class="text-sm text-slate-400">
                   Värdering:
                   {{
-                    item.Listing.valuation
-                      ? formatValuationAsSEK(item.Listing.valuation)
+                    item.ComputedValuation
+                      ? formatValuationAsSEK(item.ComputedValuation)
                       : "-"
                   }}
                 </p>
