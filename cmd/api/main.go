@@ -110,6 +110,14 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	// Scraping runs history (protected)
 	mux.Handle("/api/scraping-runs", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunsHandler)))
+
+	// Cron jobs management (protected)
+	mux.Handle("/api/cron-jobs", authMiddleware.Middleware(http.HandlerFunc(server.cronJobsHandler)))
+	mux.Handle("/api/cron-jobs/", authMiddleware.Middleware(http.HandlerFunc(server.cronJobItemHandler)))
+	// Expose status endpoint without auth so the UI can poll running jobs
+	// even when no user session is present (read-only, safe to be public).
+	mux.HandleFunc("/api/cron-jobs/status", server.cronJobsStatusHandler)
+	mux.Handle("/api/cron-jobs/cancel", authMiddleware.Middleware(http.HandlerFunc(server.cronJobsCancelHandler)))
 	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
 	})))
