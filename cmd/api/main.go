@@ -814,7 +814,8 @@ func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
 	logger.Printf("cronJobsStatusHandler invoked: method=%s remote=%s auth=%s", r.Method, r.RemoteAddr, r.Header.Get("Authorization"))
-	if r.Method != "GET" {
+	// Allow GET for body and HEAD for health checks (no body)
+	if r.Method != "GET" && r.Method != "HEAD" {
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 		return
 	}
@@ -828,6 +829,12 @@ func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// For HEAD requests, return headers only
+	if r.Method == "HEAD" {
+		w.WriteHeader(200)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"running_jobs": runningJobs,
 	})

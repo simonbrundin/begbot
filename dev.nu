@@ -25,6 +25,11 @@ def get-local-ip [] {
 
 let local_ip = (get-local-ip)
 
+# Repository root (use current working dir where script is located)
+let repo_root = (pwd)
+# Path to the actual begbot application repo (used for building/running)
+let app_root = "/home/simon/repos/begbot"
+
 # Hitta lediga portar för backend och frontend så varje worktree kan köra egna dev-servrar
 def find-free-port [] {
     try {
@@ -37,6 +42,10 @@ def find-free-port [] {
 # Lagra per-worktree portar i .dev.env för stabilitet över restarts
 let devenv_file = ".dev.env"
 let pidfile = "/tmp/dev-nu-pids"
+
+# CLI flags
+mut cli_mode = ""
+mut prune_days = 0
 
 # Hantera --reset flagg (ta bort .dev.env om användaren begär)
 mut reset_requested = false
@@ -84,6 +93,14 @@ if $help_requested {
     print "is not affected."
     exit 0
 }
+
+# Parse extra CLI flags (--mode=all/backend/frontend, --prune-days=N)
+try {
+    for $arg in $nu.args {
+        if ($arg | str starts-with "--mode=") { $cli_mode = (($arg | split row '=') | get 1) }
+        if ($arg | str starts-with "--prune-days=") { $prune_days = ((($arg | split row '=') | get 1) | into int) }
+    }
+} catch { }
 
 # Läs in befintlig .dev.env om den finns
 mut backend_port = 0
@@ -180,7 +197,11 @@ let modes = [
 ]
 
 let selection = (try {
-    $modes | str join "\n" | fzf --prompt="Mode: " --height=40% --reverse | str trim
+    if $cli_mode != "" {
+        $cli_mode
+    } else {
+        $modes | str join "\n" | fzf --prompt="Mode: " --height=40% --reverse | str trim
+    }
 } catch { "all" })
 
 let mode = if ($selection | str contains "all") {
@@ -205,7 +226,8 @@ mut actual_frontend_url = $frontend_url
 
 if $mode == "all" or $mode == "backend" {
     print $"🔧 Bygger Go backend..."
-    cd /home/simon/repos/begbot
+    # Build from the current worktree so branch-specific changes are compiled
+    cd $repo_root
     let build_result = (^bash -c "go build -o ./tmp/main ./cmd/api 2>&1" | complete)
     if $build_result.exit_code != 0 {
         print $"❌ Byggfel:\n($build_result.stdout)"
@@ -214,7 +236,7 @@ if $mode == "all" or $mode == "backend" {
     print "✓ Bygget klart"
 
     # Build output directory per-session to avoid collisions between worktrees
-    let bin_dir = ".dev/bin/($backend_internal_port)"
+    let bin_dir = $".dev/bin/($backend_internal_port)"
     try { ^bash -c $"mkdir -p ($bin_dir)" } catch { }
     let bin_path = $"($bin_dir)/main"
     # Move the built binary to per-session location if it exists
@@ -226,14 +248,14 @@ if $mode == "all" or $mode == "backend" {
         print $"✓ Socat proxy up: 127.0.0.1:($backend_port) -> 127.0.0.1:($backend_internal_port)"
 
         # Start the backend using per-session binary
-        try { ^bash -c $"export PORT=($backend_internal_port) && ($bin_path) > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
+        try { ^bash -c $"export PORT=($backend_internal_port) && nohup ($bin_path) > /tmp/tmp_main.log 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
         
         print $"✓ Backend startad - intern port: ($backend_internal_port)"
         print $"✓ Backend publik URL: ($backend_url)"
         print $"✓ Backend binary: ($bin_path)"
     } else {
-        try { ^bash -c $"export PORT=($backend_port) && ($bin_path) > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
+        try { ^bash -c $"export PORT=($backend_port) && nohup ($bin_path) > /tmp/tmp_main.log 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
         print $"✓ Backend startad: ($backend_url)"
         print $"✓ Backend binary: ($bin_path)"
@@ -242,7 +264,7 @@ if $mode == "all" or $mode == "backend" {
 
 if $mode == "all" or $mode == "frontend" {
     print $"🌐 Startar Nuxt frontend på port ($frontend_port)..."
-    cd /home/simon/repos/begbot/frontend
+    cd $"($app_root)/frontend"
     # Starta Nuxt på den valda porten och ge frontend information om backend-porten
     let log_file = "/tmp/nuxt-dev.log"
     if $have_socat == "yes" {

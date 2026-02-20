@@ -29,3 +29,6 @@ tmp/
 
 # VS Code workspace settings (local)
 /.vscode/settings.json
+
+# Per-worktree dev binaries and state
+.dev/
