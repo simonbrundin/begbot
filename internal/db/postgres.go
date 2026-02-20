@@ -511,6 +511,17 @@ func (p *Postgres) SaveProduct(ctx context.Context, product *models.Product) err
 	return p.db.QueryRowContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled).Scan(&product.ID)
 }
 
+func (p *Postgres) UpdateProduct(ctx context.Context, product *models.Product) error {
+	query := `
+		UPDATE products 
+		SET brand = $1, name = $2, category = $3, model_variant = $4, 
+		    sell_packaging_cost = $5, sell_postage_cost = $6, new_price = $7, enabled = $8
+		WHERE id = $9
+	`
+	_, err := p.db.ExecContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled, product.ID)
+	return err
+}
+
 func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*models.Product, error) {
 	query := `
 		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
