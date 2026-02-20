@@ -29,16 +29,19 @@ func NormalizeWeights(configs []models.ProductValuationTypeConfig) []models.Prod
 		return result
 	}
 
-	// Sum positive weights among active types.
+	// Sum positive weights among active types and check if any are missing a weight.
 	totalPositive := 0.0
+	allHaveWeight := true
 	for _, i := range activeIdx {
 		if result[i].Weight > 0 {
 			totalPositive += result[i].Weight
+		} else {
+			allHaveWeight = false
 		}
 	}
 
-	if totalPositive <= 0 {
-		// No positive weights at all – equal distribution.
+	if !allHaveWeight || totalPositive <= 0 {
+		// Any active type without a weight (e.g. newly re-activated) → equal distribution.
 		w := 100.0 / float64(n)
 		for _, i := range activeIdx {
 			result[i].Weight = w
@@ -46,21 +49,9 @@ func NormalizeWeights(configs []models.ProductValuationTypeConfig) []models.Prod
 		return result
 	}
 
-	// Active types with weight <= 0 receive an equal baseline share.
-	baseline := totalPositive / float64(n)
+	// All active types have positive weights – normalise proportionally to sum to 100.
 	for _, i := range activeIdx {
-		if result[i].Weight <= 0 {
-			result[i].Weight = baseline
-		}
-	}
-
-	// Re-sum and normalise so active weights sum to exactly 100.
-	total := 0.0
-	for _, i := range activeIdx {
-		total += result[i].Weight
-	}
-	for _, i := range activeIdx {
-		result[i].Weight = result[i].Weight / total * 100.0
+		result[i].Weight = result[i].Weight / totalPositive * 100.0
 	}
 
 	return result
