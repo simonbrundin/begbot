@@ -110,6 +110,15 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	// Scraping runs history (protected)
 	mux.Handle("/api/scraping-runs", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunsHandler)))
+
+	// Cron jobs management
+	// Expose status endpoint without auth so the UI can poll running jobs
+	// even when no user session is present (read-only, safe to be public).
+	mux.HandleFunc("/api/cron-jobs/status", server.cronJobsStatusHandler)
+	// Protected endpoints - require auth
+	mux.Handle("/api/cron-jobs", authMiddleware.Middleware(http.HandlerFunc(server.cronJobsHandler)))
+	mux.Handle("/api/cron-jobs/", authMiddleware.Middleware(http.HandlerFunc(server.cronJobItemHandler)))
+	mux.Handle("/api/cron-jobs/cancel", authMiddleware.Middleware(http.HandlerFunc(server.cronJobsCancelHandler)))
 	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
 	})))
@@ -804,7 +813,9 @@ func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
+	logger.Printf("cronJobsStatusHandler invoked: method=%s remote=%s auth=%s", r.Method, r.RemoteAddr, r.Header.Get("Authorization"))
+	// Allow GET for body and HEAD for health checks (no body)
+	if r.Method != "GET" && r.Method != "HEAD" {
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 		return
 	}
@@ -818,6 +829,12 @@ func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// For HEAD requests, return headers only
+	if r.Method == "HEAD" {
+		w.WriteHeader(200)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"running_jobs": runningJobs,
 	})
