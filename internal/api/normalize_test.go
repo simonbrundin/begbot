@@ -78,8 +78,8 @@ func TestNormalizeWeights_DeactivateRedistributes(t *testing.T) {
 	}
 }
 
-func TestNormalizeWeights_ReactivateGetsBaseline(t *testing.T) {
-	// Three types: one re-activated with weight 0 gets an equal share baseline.
+func TestNormalizeWeights_ReactivateGetsEqualShare(t *testing.T) {
+	// Three types: one re-activated with weight 0 gets an equal share (all get 1/3).
 	configs := []models.ProductValuationTypeConfig{
 		makeConfig(1, 1, true, 60),
 		makeConfig(1, 2, true, 40),
@@ -89,8 +89,26 @@ func TestNormalizeWeights_ReactivateGetsBaseline(t *testing.T) {
 	if total := totalActiveWeight(result); math.Abs(total-100.0) > 0.001 {
 		t.Errorf("active weights should sum to 100, got %f", total)
 	}
-	if result[2].Weight <= 0 {
-		t.Errorf("newly activated type should have weight > 0, got %f", result[2].Weight)
+	want := 100.0 / 3.0
+	for idx, c := range result {
+		if math.Abs(c.Weight-want) > 0.001 {
+			t.Errorf("type %d: expected weight ~%.4f, got %.4f", idx+1, want, c.Weight)
+		}
+	}
+}
+
+func TestNormalizeWeights_ReactivateTwoTypesGetsEqual(t *testing.T) {
+	// Regression: deactivate one of two types (→ 100%), reactivate it → should be 50/50.
+	configs := []models.ProductValuationTypeConfig{
+		makeConfig(1, 1, true, 100), // sole active type after the other was deactivated
+		makeConfig(1, 2, true, 0),   // newly re-activated, weight was zeroed out
+	}
+	result := NormalizeWeights(configs)
+	if math.Abs(result[0].Weight-50.0) > 0.001 {
+		t.Errorf("expected type 1 weight ~50.0, got %.4f", result[0].Weight)
+	}
+	if math.Abs(result[1].Weight-50.0) > 0.001 {
+		t.Errorf("expected type 2 weight ~50.0, got %.4f", result[1].Weight)
 	}
 }
 
