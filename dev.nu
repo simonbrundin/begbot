@@ -312,7 +312,7 @@ print "\n✅ Utvecklingsservrar körs!"
 print $"   Backend: ($backend_url)"
 print $"   Frontend: ($final_frontend_url)"
 print $"   .dev.env: ($devenv_file)"
-print "\n⌨️  Tryck [q] för att stoppa alla servrar...\n"
+print "\n⌨️  Tryck [q] för att stoppa alla servrar, [o] för att öppna frontend i webbläsaren...\n"
 
 # -----------------------------------------------
 # Håll skriptet aktivt – vänta på 'q' eller att servrarna dör
@@ -347,6 +347,9 @@ while true {
                 for $p in $ports { if $p == 0 { continue } ; try { ^bash -c $"lsof -i :($p) -t 2>/dev/null | xargs -r kill -9 2>/dev/null" } catch { } }
                 print '✓ Klart.'
                 break
+            } else if ($key == 'o') or ($key == 'O') {
+                print $"\n🌐 Öppnar frontend: ($final_frontend_url)"
+                try { ^bash -c $"xdg-open ($final_frontend_url) >/dev/null 2>&1 &" } catch { }
             }
         }
     }
