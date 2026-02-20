@@ -108,8 +108,8 @@ func main() {
 	mux.Handle("/api/marketplaces", authMiddleware.Middleware(http.HandlerFunc(server.getMarketplaces)))
 	mux.Handle("/api/search-terms", authMiddleware.Middleware(http.HandlerFunc(server.searchTermsHandler)))
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
-	// Scraping runs history (protected)
-	mux.Handle("/api/scraping-runs", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunsHandler)))
+	// Scraping runs history (public for testing)
+	mux.HandleFunc("/api/scraping-runs", server.scrapingRunsHandler)
 	mux.Handle("/api/fetch-ads", authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.fetchAdsHandlerWithConfig(w, r, cfg)
 	})))
