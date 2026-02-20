@@ -77,6 +77,14 @@ func NewAuthMiddleware(supabaseURL, supabaseAnonKey string) *AuthMiddleware {
 // Middleware wraps HTTP handlers with authentication
 func (am *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow unauthenticated access to certain safe, read-only endpoints.
+		// This is used so frontend polling (e.g. /api/cron-jobs/status) can
+		// work without a user session while keeping create/update/delete
+		// endpoints protected.
+		if r.Method == "GET" && r.URL.Path == "/api/cron-jobs/status" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// Extract token from Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
