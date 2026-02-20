@@ -813,6 +813,7 @@ func (s *Server) cronJobItemHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cronJobsStatusHandler(w http.ResponseWriter, r *http.Request) {
+	logger.Printf("cronJobsStatusHandler invoked: method=%s remote=%s auth=%s", r.Method, r.RemoteAddr, r.Header.Get("Authorization"))
 	if r.Method != "GET" {
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 		return
