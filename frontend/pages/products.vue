@@ -16,19 +16,19 @@
       <table class="table whitespace-nowrap">
         <thead>
           <tr>
-            <th>Märke</th>
-            <th>Namn</th>
-            <th>Kategori</th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('brand')">Märke <span>{{ getSortIcon('brand') }}</span></th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('name')">Namn <span>{{ getSortIcon('name') }}</span></th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('category')">Kategori <span>{{ getSortIcon('category') }}</span></th>
             <th v-for="vt in enabledValuationTypes" :key="vt.id">{{ vt.name }}</th>
-            <th>Sammanvägd värdering</th>
-            <th>Aktiverad</th>
-            <th>Skapad</th>
-            <th>Senast värderad</th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('weighted')">Sammanvägd värdering <span>{{ getSortIcon('weighted') }}</span></th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('enabled')">Aktiverad <span>{{ getSortIcon('enabled') }}</span></th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('created_at')">Skapad <span>{{ getSortIcon('created_at') }}</span></th>
+            <th class="cursor-pointer hover:text-primary-300" @click="handleSort('last_valuated')">Senast värderad <span>{{ getSortIcon('last_valuated') }}</span></th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="product in products" :key="product.id">
+          <tr v-for="product in sortedProducts" :key="product.id">
             <td class="font-medium text-slate-100">{{ product.brand || '-' }}</td>
             <td>{{ product.name || '-' }}</td>
             <td>{{ product.category || '-' }}</td>
@@ -328,6 +328,100 @@ const defaultForm = {
 }
 
 const form = ref({ ...defaultForm })
+
+const sortColumn = ref<string | null>(null)
+const sortDirection = ref<'asc' | 'desc'>('asc')
+
+const getLatestValuationDate = (productId: number): Date | null => {
+  const valuations = valuationsByProduct.value[productId]
+  if (!valuations || valuations.length === 0) return null
+  const sorted = [...valuations].sort((a, b) => 
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+  return sorted[0]?.created_at ? new Date(sorted[0].created_at) : null
+}
+
+const sortedProducts = computed(() => {
+  if (!sortColumn.value) return products.value
+
+  return [...products.value].sort((a, b) => {
+    let aVal: any
+    let bVal: any
+
+    switch (sortColumn.value) {
+      case 'brand':
+        aVal = a.brand?.toLowerCase() ?? ''
+        bVal = b.brand?.toLowerCase() ?? ''
+        break
+      case 'name':
+        aVal = a.name?.toLowerCase() ?? ''
+        bVal = b.name?.toLowerCase() ?? ''
+        break
+      case 'category':
+        aVal = a.category?.toLowerCase() ?? ''
+        bVal = b.category?.toLowerCase() ?? ''
+        break
+      case 'weighted':
+        aVal = weightedValuations[a.id]?.average ?? null
+        bVal = weightedValuations[b.id]?.average ?? null
+        break
+      case 'enabled':
+        aVal = a.enabled === true
+        bVal = b.enabled === true
+        break
+      case 'created_at':
+        aVal = a.created_at ? new Date(a.created_at).getTime() : 0
+        bVal = b.created_at ? new Date(b.created_at).getTime() : 0
+        break
+      case 'last_valuated':
+        aVal = getLatestValuationDate(a.id)?.getTime() ?? 0
+        bVal = getLatestValuationDate(b.id)?.getTime() ?? 0
+        break
+      default:
+        return 0
+    }
+
+    if (aVal === null || aVal === undefined || aVal === '') {
+      return sortDirection.value === 'asc' ? 1 : -1
+    }
+    if (bVal === null || bVal === undefined || bVal === '') {
+      return sortDirection.value === 'asc' ? -1 : 1
+    }
+
+    if (typeof aVal === 'string') {
+      return sortDirection.value === 'asc' 
+        ? aVal.localeCompare(bVal)
+        : bVal.localeCompare(aVal)
+    }
+
+    if (typeof aVal === 'boolean') {
+      return sortDirection.value === 'asc'
+        ? (aVal === bVal ? 0 : aVal ? -1 : 1)
+        : (aVal === bVal ? 0 : aVal ? 1 : -1)
+    }
+
+    return sortDirection.value === 'asc' ? aVal - bVal : bVal - aVal
+  })
+})
+
+const handleSort = (column: string) => {
+  if (sortColumn.value === column) {
+    if (sortDirection.value === 'asc') {
+      sortDirection.value = 'desc'
+    } else if (sortDirection.value === 'desc') {
+      sortColumn.value = null
+      sortDirection.value = 'asc'
+    }
+  } else {
+    sortColumn.value = column
+    sortDirection.value = 'asc'
+  }
+}
+
+const getSortIcon = (column: string) => {
+  if (sortColumn.value !== column) return ''
+  return sortDirection.value === 'asc' ? '↑' : '↓'
+}
 
 const fetchData = async () => {
   loading.value = true
