@@ -279,6 +279,8 @@ if $mode == "all" or $mode == "frontend" {
     }
     cd $"($repo_root)/frontend"
     # Starta Nuxt på den valda porten och ge frontend information om backend-porten
+    # Debug: skriv ut viktiga sökvägar och portar så vi lätt kan felsöka bindningar
+    print $"DEBUG: repo_root=($repo_root) app_root=($app_root) FRONTEND_PORT=($frontend_port) FRONTEND_INTERNAL_PORT=($frontend_internal_port) BACKEND_PORT=($backend_port) BACKEND_INTERNAL_PORT=($backend_internal_port)"
     let log_file = "/tmp/nuxt-dev.log"
     if $have_socat == "yes" {
         # Bind publik frontend_port via socat till en intern port där Nuxt startas
