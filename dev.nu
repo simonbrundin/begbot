@@ -213,20 +213,30 @@ if $mode == "all" or $mode == "backend" {
     }
     print "✓ Bygget klart"
 
+    # Build output directory per-session to avoid collisions between worktrees
+    let bin_dir = ".dev/bin/($backend_internal_port)"
+    try { ^bash -c $"mkdir -p ($bin_dir)" } catch { }
+    let bin_path = $"($bin_dir)/main"
+    # Move the built binary to per-session location if it exists
+    try { ^bash -c $"[ -f ./tmp/main ] && mv ./tmp/main ($bin_path) || true" } catch { }
+
     print $"🔧 Startar Go backend på port ($backend_port)..."
     if $have_socat == "yes" {
         try { ^bash -c $"socat TCP-LISTEN:($backend_port),reuseaddr,fork TCP:127.0.0.1:($backend_internal_port) >/dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         print $"✓ Socat proxy up: 127.0.0.1:($backend_port) -> 127.0.0.1:($backend_internal_port)"
 
-        try { ^bash -c $"export PORT=($backend_internal_port) && ./tmp/main > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
+        # Start the backend using per-session binary
+        try { ^bash -c $"export PORT=($backend_internal_port) && ($bin_path) > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
         
         print $"✓ Backend startad - intern port: ($backend_internal_port)"
         print $"✓ Backend publik URL: ($backend_url)"
+        print $"✓ Backend binary: ($bin_path)"
     } else {
-        try { ^bash -c $"export PORT=($backend_port) && ./tmp/main > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
+        try { ^bash -c $"export PORT=($backend_port) && ($bin_path) > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
         print $"✓ Backend startad: ($backend_url)"
+        print $"✓ Backend binary: ($bin_path)"
     }
 }
 
