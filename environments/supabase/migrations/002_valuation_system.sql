@@ -21,6 +21,7 @@ ON CONFLICT (name) DO NOTHING;
 CREATE TABLE IF NOT EXISTS valuations (
     id SERIAL PRIMARY KEY,
     product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+    listing_id INTEGER REFERENCES listings(id),
     valuation_type_id SMALLINT REFERENCES valuation_types(id),
     valuation INTEGER NOT NULL,
     metadata JSONB DEFAULT '{}',
@@ -29,5 +30,6 @@ CREATE TABLE IF NOT EXISTS valuations (
 
 -- Indexes for efficient lookups
 CREATE INDEX idx_valuations_product_id ON valuations(product_id);
+CREATE INDEX idx_valuations_listing_id ON valuations(listing_id);
 CREATE INDEX idx_valuations_type_id ON valuations(valuation_type_id);
 CREATE INDEX idx_valuations_created_at ON valuations(created_at DESC);

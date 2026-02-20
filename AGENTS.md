@@ -1,17 +1,14 @@
 # Agent Instructions
 
-## MANDATORY: Use td for Task Management
-
-You must run td usage --new-session at conversation start (or after /clear) to see current work.
-Use td usage -q for subsequent reads.
-
 ## Database Access
 
-Opencode does not have permission to make changes to the production database in Supabase without asking for confirmation first.
+Opencode does not have permission to make changes to the production database in
+Supabase without asking for confirmation first.
 
 ## API Architecture
 
-This project uses **only Go API** for backend. No Nuxt server routes or API endpoints under `frontend/server/api/` are allowed.
+This project uses **only Go API** for backend. No Nuxt server routes or API
+endpoints under `frontend/server/api/` are allowed.
 
 - Backend code lives in `cmd/api/` and `internal/`
 - Frontend only consumes Go API at `localhost:8081`

@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,7 @@ type Server struct {
 	searchHistoryService *services.SearchHistoryService
 	scheduler            *services.Scheduler
 	messagingService     *services.MessagingService
+	valuationService     *services.ValuationService
 }
 
 func main() {
@@ -80,6 +82,7 @@ func main() {
 		searchHistoryService: services.NewSearchHistoryService(database),
 		scheduler:            scheduler,
 		messagingService:     messagingService,
+		valuationService:     valuationService,
 	}
 
 	// Initialize auth middleware
@@ -1316,8 +1319,7 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	type CollectValuationRequest struct {
-		ProductID   int64  `json:"product_id"`
-		ProductInfo string `json:"product_info"`
+		ProductID int64 `json:"product_id"`
 	}
 
 	var req CollectValuationRequest
@@ -1326,9 +1328,167 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if req.ProductID == 0 {
+		api.WriteValidationError(w, []api.ValidationError{{Field: "product_id", Message: "product_id krävs"}})
+		return
+	}
+
+	ctx := r.Context()
+
+	product, err := s.db.GetProductByID(ctx, req.ProductID)
+	if err != nil {
+		api.WriteError(w, "Produkt hittades inte", "NOT_FOUND", 404)
+		return
+	}
+
+	// If product not found, return 404 (GetProductByID may return (nil, nil))
+	if product == nil {
+		api.WriteError(w, "Produkt hittades inte", "NOT_FOUND", 404)
+		return
+	}
+
+	productInfo := services.ProductInfo{}
+	if product.Brand != nil {
+		productInfo.Manufacturer = *product.Brand
+	}
+	if product.Name != nil {
+		productInfo.Model = *product.Name
+	}
+	if product.Category != nil {
+		productInfo.Category = *product.Category
+	}
+	if product.ModelVariant != nil {
+		productInfo.Storage = *product.ModelVariant
+	}
+	if product.NewPrice != nil {
+		productInfo.NewPrice = float64(*product.NewPrice)
+	}
+
+	if s.valuationService == nil {
+		logger.Printf("Error: valuation service not initialized")
+		api.WriteServerError(w, "Valuation service not available")
+		return
+	}
+
+	inputs, collectResults := s.valuationService.CollectAllWithErrors(ctx, productInfo)
+
+	// Log collected inputs for debugging. If a method returns detailed breakdown (e.g. Tradera), include it.
+	logger.Printf("collectValuations: product_id=%d collected=%d inputs=%v", req.ProductID, len(inputs), func() []interface{} {
+		out := make([]interface{}, 0, len(inputs))
+		for _, v := range inputs {
+			item := map[string]interface{}{"type": v.Type, "value": v.Value, "source": v.SourceURL}
+			if v.Metadata != nil {
+				if breakdown, ok := v.Metadata["breakdown"]; ok {
+					item["breakdown"] = breakdown
+				}
+			}
+			out = append(out, item)
+		}
+		return out
+	}())
+
+	if len(inputs) > 0 {
+		if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", req.ProductID), inputs); err != nil {
+			logger.Printf("Warning: failed to save valuations for product %d: %v", req.ProductID, err)
+			api.WriteServerError(w, err.Error())
+			return
+		}
+	} else {
+		logger.Printf("collectValuations: no inputs collected for product %d", req.ProductID)
+	}
+
+	type resultItem struct {
+		Type      string `json:"type"`
+		Value     int    `json:"value,omitempty"`
+		SourceURL string `json:"source_url,omitempty"`
+		Count     int    `json:"count,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+	var results []resultItem
+	for _, r := range collectResults {
+		// If Tradera returned a breakdown with multiple query results, expand those into separate result items
+		if r.Input != nil && r.Input.Type == "Tradera" && r.Input.Metadata != nil {
+			if bdRaw, ok := r.Input.Metadata["breakdown"]; ok {
+				if bdMap, ok := bdRaw.(map[string]interface{}); ok {
+					// Determine deterministic ordering: prefer metadata["queries"] if present
+					var orderedKeys []string
+					if qRaw, ok := r.Input.Metadata["queries"]; ok {
+						switch qs := qRaw.(type) {
+						case []interface{}:
+							for _, qi := range qs {
+								if s, ok := qi.(string); ok {
+									orderedKeys = append(orderedKeys, s)
+								}
+							}
+						case []string:
+							orderedKeys = append(orderedKeys, qs...)
+						}
+					}
+					if len(orderedKeys) == 0 {
+						for k := range bdMap {
+							orderedKeys = append(orderedKeys, k)
+						}
+						sort.Strings(orderedKeys)
+					}
+
+					// Add each breakdown entry as its own result (e.g. brand+model and model-only)
+					for _, q := range orderedKeys {
+						entry := resultItem{Type: fmt.Sprintf("Tradera (%s)", q)}
+						if entryRaw, ok := bdMap[q]; ok {
+							if eMap, ok := entryRaw.(map[string]interface{}); ok {
+								// price may be float64 or int
+								if valf, ok := eMap["price"].(float64); ok {
+									entry.Value = int(valf)
+								} else if vali, ok := eMap["price"].(int); ok {
+									entry.Value = vali
+								}
+
+								// count may be float64 (from JSON decode) or int
+								if cf, ok := eMap["count"].(float64); ok {
+									entry.Count = int(cf)
+								} else if ci, ok := eMap["count"].(int); ok {
+									entry.Count = ci
+								}
+								if src, ok := eMap["source_url"].(string); ok {
+									entry.SourceURL = src
+								}
+								if entry.Value == 0 {
+									if medf, ok := eMap["median_price"].(float64); ok {
+										entry.Value = int(medf)
+									} else if medi, ok := eMap["median_price"].(int); ok {
+										entry.Value = medi
+									}
+								}
+							}
+						}
+						if entry.Value == 0 {
+							entry.Error = "inga priser hittades"
+						}
+						results = append(results, entry)
+					}
+
+					// Also add the combined Tradera result (weighted by counts) as a summary entry
+					summary := resultItem{Type: "Tradera (sammanvägd)", Value: r.Input.Value, SourceURL: r.Input.SourceURL}
+					results = append(results, summary)
+					continue
+				}
+			}
+		}
+
+		item := resultItem{Type: r.Input.Type}
+		if r.Error != "" {
+			item.Error = r.Error
+		} else {
+			item.Value = r.Input.Value
+			item.SourceURL = r.Input.SourceURL
+		}
+		results = append(results, item)
+	}
+
 	api.WriteSuccess(w, map[string]interface{}{
-		"message":    "Valuation collection not fully implemented in API yet",
 		"product_id": req.ProductID,
+		"collected":  len(inputs),
+		"results":    results,
 	})
 }
 
