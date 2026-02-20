@@ -264,7 +264,20 @@ if $mode == "all" or $mode == "backend" {
 
 if $mode == "all" or $mode == "frontend" {
     print $"🌐 Startar Nuxt frontend på port ($frontend_port)..."
-    cd $"($app_root)/frontend"
+    # Skapa symlinkar från huvudrepot om de saknas i denna worktree
+    let wt_nm = $"($repo_root)/frontend/node_modules"
+    let main_nm = $"($app_root)/frontend/node_modules"
+    if not ($wt_nm | path exists) {
+        print $"⚙️  node_modules saknas, skapar symlink från ($main_nm)..."
+        try { ^bash -c $"ln -s ($main_nm) ($wt_nm)" } catch { print "⚠️  Kunde inte skapa symlink för node_modules" }
+    }
+    let wt_env = $"($repo_root)/frontend/.env"
+    let main_env = $"($app_root)/frontend/.env"
+    if not ($wt_env | path exists) and ($main_env | path exists) {
+        print $"⚙️  .env saknas, skapar symlink från ($main_env)..."
+        try { ^bash -c $"ln -s ($main_env) ($wt_env)" } catch { print "⚠️  Kunde inte skapa symlink för .env" }
+    }
+    cd $"($repo_root)/frontend"
     # Starta Nuxt på den valda porten och ge frontend information om backend-porten
     let log_file = "/tmp/nuxt-dev.log"
     if $have_socat == "yes" {
