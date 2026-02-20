@@ -1127,10 +1127,16 @@ func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listin
 
 func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, listingID *int64) error {
 	query := `
-		INSERT INTO valuations (product_id, listing_id, valuation_type_id, valuation, metadata)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at
-	`
+        INSERT INTO valuations (product_id, listing_id, valuation_type_id, valuation, metadata)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (product_id, valuation_type_id) DO UPDATE
+          SET valuation = EXCLUDED.valuation,
+              metadata = EXCLUDED.metadata,
+              listing_id = EXCLUDED.listing_id,
+              created_at = NOW()
+        RETURNING id, created_at
+    `
+
 	err := p.db.QueryRowContext(ctx, query, v.ProductID, listingID, v.ValuationTypeID, v.Valuation, v.Metadata).
 		Scan(&v.ID, &v.CreatedAt)
 	return err

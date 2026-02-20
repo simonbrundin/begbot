@@ -89,13 +89,49 @@
             </td>
             <td class="text-sm text-slate-400">{{ formatDate(product.created_at) }}</td>
             <td>
-              <button @click="editProduct(product)" class="text-primary-400 hover:text-primary-300">
-                Redigera
-              </button>
+              <div class="flex items-center gap-3">
+                <button @click="editProduct(product)" class="text-primary-400 hover:text-primary-300">
+                  Redigera
+                </button>
+                <button
+                  @click="collectValuations(product.id)"
+                  :disabled="collectingProducts.has(product.id)"
+                  class="text-slate-400 hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+                >
+                  {{ collectingProducts.has(product.id) ? 'Uppdaterar...' : 'Uppdatera' }}
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Logg-modal för insamlade värderingar -->
+    <div v-if="collectLog" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div class="bg-slate-800 rounded-lg p-6 w-full max-w-lg border border-slate-700">
+        <h2 class="text-lg font-bold text-slate-100 mb-4">Uppdatera värderingar</h2>
+        <div v-if="collectLog.loading" class="text-slate-400 text-sm">Samlar in värderingar...</div>
+        <ul v-else class="space-y-3">
+          <li v-for="r in collectLog.results" :key="r.type" class="text-sm">
+            <div class="font-medium" :class="r.error ? 'text-slate-400' : 'text-slate-200'">{{ r.type }}</div>
+            <div v-if="r.error" class="text-red-400 text-xs">{{ r.error }}</div>
+            <template v-else>
+              <div v-if="r.source_url" class="text-slate-400 text-xs truncate">
+                <a :href="r.source_url" target="_blank" class="hover:text-primary-300">{{ r.source_url }}</a>
+              </div>
+                <div class="flex items-baseline gap-2">
+                  <div class="text-emerald-400">{{ formatValuationAsSEK(r.value) }} kr</div>
+                  <div v-if="r.count != null" class="text-slate-400 text-xs">{{ formatAdsCount(r.count) }}</div>
+                </div>
+            </template>
+          </li>
+          <li v-if="collectLog.results.length === 0" class="text-slate-400 text-sm">Inga värderingar hittades.</li>
+        </ul>
+        <div class="flex justify-end mt-5">
+          <button @click="collectLog = null" class="btn btn-secondary">Stäng</button>
+        </div>
+      </div>
     </div>
 
     <div v-if="showAddModal || editingProduct" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
@@ -178,6 +214,8 @@ const valuationConfigsByProduct = ref<Record<number, ProductValuationTypeConfig[
 
 const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.enabled !== false))
 const loading = ref(false)
+const collectingProducts = ref<Set<number>>(new Set())
+const collectLog = ref<{ loading: boolean; results: { type: string; value: number; source_url?: string; error?: string; count?: number }[] } | null>(null)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
 
@@ -318,6 +356,13 @@ const formatDate = (dateStr?: string | null) => {
 const formatValuationAsSEK = (sek: number | null | undefined) => {
   if (sek === null || sek === undefined) return '-'
   return sek.toLocaleString('sv-SE')
+}
+
+const formatAdsCount = (count?: number | null) => {
+  if (count === null || count === undefined) return ''
+  const n = Math.round(count)
+  if (n === 1) return '· 1 annons'
+  return `· ${n.toLocaleString('sv-SE')} annonser`
 }
 
 const formatEnabled = (enabled: boolean) => enabled ? 'Ja' : 'Nej'
@@ -500,6 +545,27 @@ const saveValuation = async (productId: number, typeId: number) => {
   } catch (e) {
     console.error('Failed to save valuation:', e)
     showSaveStatus('error', 'Kunde inte spara värdering')
+  }
+}
+
+const collectValuations = async (productId: number) => {
+  collectingProducts.value = new Set([...collectingProducts.value, productId])
+  collectLog.value = { loading: true, results: [] }
+  try {
+    const res = await api.post<{ collected: number; results: { type: string; value: number; source_url?: string; error?: string }[] }>(
+      '/valuations/collect',
+      { product_id: productId }
+    )
+    collectLog.value = { loading: false, results: res.results ?? [] }
+    await fetchData()
+  } catch (e) {
+    console.error('Failed to collect valuations:', e)
+    collectLog.value = null
+    showSaveStatus('error', 'Kunde inte uppdatera värderingar')
+  } finally {
+    const next = new Set(collectingProducts.value)
+    next.delete(productId)
+    collectingProducts.value = next
   }
 }
 

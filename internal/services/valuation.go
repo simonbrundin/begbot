@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	// "strings" not used anymore
 	"sync"
 	"time"
 
@@ -109,27 +110,40 @@ func (s *ValuationService) RegisterMethod(m ValuationMethod) {
 }
 
 func (s *ValuationService) CollectAll(ctx context.Context, productID string, productInfo ProductInfo) ([]ValuationInput, error) {
+	inputs, _ := s.CollectAllWithErrors(ctx, productInfo)
+	return inputs, nil
+}
+
+type CollectResult struct {
+	Input *ValuationInput
+	Error string
+}
+
+func (s *ValuationService) CollectAllWithErrors(ctx context.Context, productInfo ProductInfo) ([]ValuationInput, []CollectResult) {
 	var inputs []ValuationInput
+	var results []CollectResult
 
 	for _, method := range s.methods {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return inputs, results
 		default:
 		}
 
 		input, err := method.Valuate(ctx, productInfo)
 		if err != nil {
 			log.Printf("Valuation method %s failed: %v", method.Name(), err)
+			results = append(results, CollectResult{Input: &ValuationInput{Type: method.Name()}, Error: err.Error()})
 			continue
 		}
 
 		if input != nil {
 			inputs = append(inputs, *input)
+			results = append(results, CollectResult{Input: input})
 		}
 	}
 
-	return inputs, nil
+	return inputs, results
 }
 
 func (s *ValuationService) Compile(ctx context.Context, inputs []ValuationInput) (*ValuationOutput, error) {
@@ -141,6 +155,7 @@ func (s *ValuationService) SaveValuations(ctx context.Context, productID string,
 }
 
 func (s *ValuationService) SaveValuationsWithListingID(ctx context.Context, productID string, inputs []ValuationInput, listingID *int64) error {
+	var firstErr error
 	for _, input := range inputs {
 		metadataJSON, err := json.Marshal(input.Metadata)
 		if err != nil {
@@ -169,10 +184,13 @@ func (s *ValuationService) SaveValuationsWithListingID(ctx context.Context, prod
 		}, listingID)
 		if err != nil {
 			log.Printf("Failed to save valuation for method %s: %v", input.Type, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 func (s *ValuationService) getValuationTypeID(typeName string) int16 {
@@ -470,231 +488,394 @@ func (m *TraderaValuationMethod) Valuate(ctx context.Context, productInfo Produc
 		return nil, nil
 	}
 
-	// Build query: prefer manufacturer+model, fall back to ad text
-	query := ""
-	if productInfo.Manufacturer != "" && productInfo.Model != "" {
-		query = productInfo.Manufacturer + " " + productInfo.Model
-	} else if productInfo.AdText != "" {
-		query = productInfo.AdText
-	}
+	// We'll support two queries when both manufacturer and model are present:
+	//  - brand+model
+	//  - model only
+	// We will compute both prices (using cached results when available), log both via metadata
+	// and return a single ValuationInput where Value is the integer average of the two.
 
-	if query == "" {
-		return nil, nil
+	basePageURL := "https://www.tradera.com/valuation"
+	if m.svc.cfg.Scraping.Tradera.BaseURL != "" {
+		basePageURL = m.svc.cfg.Scraping.Tradera.BaseURL
 	}
 
 	timeout := m.svc.cfg.Scraping.Tradera.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-
 	client := &http.Client{Timeout: timeout}
 
-	apiURL := "https://api.tradera.com/v1/valuation"
-	if m.svc.cfg.Scraping.Tradera.BaseURL != "" {
-		apiURL = m.svc.cfg.Scraping.Tradera.BaseURL
+	// Helper to get a valuation response for a single query (with category refinement)
+	getResultForQuery := func(ctx context.Context, client *http.Client, apiBaseURL string, cookies []*http.Cookie, q string) (*traderaValuationResponse, int, string, error) {
+		first, err := traderaValuationSearch(ctx, client, apiBaseURL, q, 0, cookies)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		result := first
+		// Diagnostic log: record what the first (unfiltered) API response contained
+		log.Printf("Tradera first-pass: query=%q count=%d median=%.2f average=%.2f lowest=%.2f highest=%.2f", q, first.Count, first.MedianPrice, first.AveragePrice, first.LowestPrice, first.HighestPrice)
+		bestCategoryID := 0
+		bestCategoryName := ""
+		if len(first.CategoryHits) > 0 {
+			bestHit := first.CategoryHits[0]
+			for _, hit := range first.CategoryHits {
+				if hit.Count > bestHit.Count {
+					bestHit = hit
+				}
+			}
+			if len(bestHit.Category) > 0 {
+				deepest := bestHit.Category[len(bestHit.Category)-1]
+				bestCategoryID = deepest.ID
+				bestCategoryName = deepest.Name
+				filtered, err := traderaValuationSearch(ctx, client, apiBaseURL, q, bestCategoryID, cookies)
+				if err == nil && filtered.AveragePrice > 0 {
+					result = filtered
+					log.Printf("Tradera filtered: query=%q category=%d name=%q count=%d median=%.2f average=%.2f", q, bestCategoryID, bestCategoryName, filtered.Count, filtered.MedianPrice, filtered.AveragePrice)
+				}
+			}
+		}
+		return result, bestCategoryID, bestCategoryName, nil
 	}
 
-	u, err := url.Parse(apiURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid tradera api url: %w", err)
+	// Build list of queries to run
+	queries := []string{}
+	if productInfo.Manufacturer != "" && productInfo.Model != "" {
+		queries = append(queries, productInfo.Manufacturer+" "+productInfo.Model)
+		queries = append(queries, productInfo.Model)
+	} else if productInfo.AdText != "" {
+		queries = append(queries, productInfo.AdText)
 	}
 
-	q := u.Query()
-	q.Set("q", query)
-	u.RawQuery = q.Encode()
+	if len(queries) == 0 {
+		return nil, nil
+	}
 
-	// Simple cache key includes base url and query
-	cacheKey := u.String()
-	// Cache TTL
+	// Prepare results storage
+	prices := make(map[string]int)
+	counts := make(map[string]int)
+	medians := make(map[string]int)
+	averages := make(map[string]int)
+	bestCats := make(map[string]map[string]interface{})
+	confidences := make(map[string]float64)
+
 	cacheTTL := 5 * time.Minute
 
-	// Check cache
-	traderaCache.mu.RLock()
-	if e, ok := traderaCache.m[cacheKey]; ok {
-		if time.Since(e.Collected) < cacheTTL {
-			cached := e.Val
-			traderaCache.mu.RUnlock()
-			return &cached, nil
-		}
-	}
-	traderaCache.mu.RUnlock()
+	// Fetch page/cookies only if we need to call Tradera API for any non-cached query
+	needFetch := false
+	for _, q := range queries {
+		cacheKey := "tradera-valuation:" + q
+		traderaCache.mu.RLock()
+		if e, ok := traderaCache.m[cacheKey]; ok {
+			if time.Since(e.Collected) < cacheTTL {
+				cached := e.Val
+				prices[q] = cached.Value
 
-	// Retry loop with exponential backoff
-	var body []byte
-	maxAttempts := 3
-	backoff := 100 * time.Millisecond
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build tradera request: %w", err)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("tradera request failed: %w", err)
-			if attempt < maxAttempts {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return nil, lastErr
-		}
-
-		body, err = io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read tradera response: %w", err)
-			if attempt < maxAttempts {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return nil, lastErr
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			break
-		}
-
-		// Handle 429 with a longer wait and retry
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxAttempts {
-			time.Sleep(500 * time.Millisecond * time.Duration(attempt))
-			continue
-		}
-
-		// For other non-OK statuses, treat as error
-		lastErr = fmt.Errorf("tradera api returned status %d: %s", resp.StatusCode, string(body))
-		if attempt < maxAttempts {
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-		return nil, lastErr
-	}
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse tradera response json: %w", err)
-	}
-
-	var priceFloat float64
-	var confFloat float64
-
-	keys := []string{"price", "valuation", "value", "estimated_price", "estimatedValue", "amount"}
-	for _, k := range keys {
-		if v, ok := parsed[k]; ok && v != nil {
-			switch x := v.(type) {
-			case float64:
-				priceFloat = x
-			case int:
-				priceFloat = float64(x)
-			case int64:
-				priceFloat = float64(x)
-			case string:
-				if p, err := strconv.ParseFloat(x, 64); err == nil {
-					priceFloat = p
-				}
-			}
-			if priceFloat > 0 {
-				break
-			}
-		}
-	}
-
-	if priceFloat == 0 {
-		for _, parent := range []string{"data", "result", "valuation"} {
-			if pmap, ok := parsed[parent].(map[string]interface{}); ok {
-				for _, k := range keys {
-					if v, ok := pmap[k]; ok && v != nil {
-						switch x := v.(type) {
-						case float64:
-							priceFloat = x
+				// Try to extract count/median/average from cached metadata
+				if cached.Metadata != nil {
+					if v, ok := cached.Metadata["count"]; ok {
+						switch t := v.(type) {
 						case int:
-							priceFloat = float64(x)
+							counts[q] = t
+						case float64:
+							counts[q] = int(t)
 						case int64:
-							priceFloat = float64(x)
-						case string:
-							if p, err := strconv.ParseFloat(x, 64); err == nil {
-								priceFloat = p
-							}
+							counts[q] = int(t)
+						default:
+							counts[q] = 1
 						}
-						if priceFloat > 0 {
-							break
-						}
+					} else {
+						counts[q] = 1
 					}
+
+					if v, ok := cached.Metadata["median_price"]; ok {
+						switch t := v.(type) {
+						case int:
+							medians[q] = t
+						case float64:
+							medians[q] = int(t)
+						default:
+							medians[q] = cached.Value
+						}
+					} else {
+						medians[q] = cached.Value
+					}
+
+					if v, ok := cached.Metadata["average_price"]; ok {
+						switch t := v.(type) {
+						case int:
+							averages[q] = t
+						case float64:
+							averages[q] = int(t)
+						default:
+							averages[q] = cached.Value
+						}
+					} else {
+						averages[q] = cached.Value
+					}
+
+					// Confidence stored on the cached ValuationInput
+					confidences[q] = cached.Confidence
+				} else {
+					counts[q] = 1
+					medians[q] = cached.Value
+					averages[q] = cached.Value
+					confidences[q] = cached.Confidence
 				}
+
+				traderaCache.mu.RUnlock()
+				continue
 			}
-			if priceFloat > 0 {
-				break
-			}
+		}
+		traderaCache.mu.RUnlock()
+		needFetch = true
+	}
+
+	var pageCookies []*http.Cookie
+	var apiBaseURL string
+	if needFetch {
+		pageReq, err := http.NewRequestWithContext(ctx, "GET", basePageURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build tradera page request: %w", err)
+		}
+		pageReq.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+		pageResp, err := client.Do(pageReq)
+		if err != nil {
+			return nil, fmt.Errorf("tradera page request failed: %w", err)
+		}
+		io.Copy(io.Discard, pageResp.Body)
+		pageCookies = pageResp.Cookies()
+		pageResp.Body.Close()
+
+		parsedBase, err := url.Parse(basePageURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base url: %w", err)
+		}
+		apiBaseURL = fmt.Sprintf("%s://%s/valuationsearch", parsedBase.Scheme, parsedBase.Host)
+	} else {
+		// still need apiBaseURL for constructing source URLs
+		parsedBase, _ := url.Parse(basePageURL)
+		apiBaseURL = fmt.Sprintf("%s://%s/valuationsearch", parsedBase.Scheme, parsedBase.Host)
+	}
+
+	// For each query not cached, call Tradera API
+	for _, q := range queries {
+		if _, ok := prices[q]; ok {
+			continue
+		}
+		result, bestCategoryID, bestCategoryName, err := getResultForQuery(ctx, client, apiBaseURL, pageCookies, q)
+		if err != nil {
+			// don't fail the whole Valuate if one query fails; log and continue
+			log.Printf("Tradera valuation for query %q failed: %v", q, err)
+			continue
+		}
+
+		// result prices are floats; pick median then average and convert to int
+		var priceFloat float64
+		if result.MedianPrice > 0 {
+			priceFloat = result.MedianPrice
+		} else if result.AveragePrice > 0 {
+			priceFloat = result.AveragePrice
+		}
+		price := int(math.Round(priceFloat))
+		if price <= 0 {
+			log.Printf("Tradera: inga priser hittades för sökning: %s - response: %+v", q, result)
+			continue
+		}
+
+		confidence := 0.5
+		if result.Count >= 10 {
+			confidence = 0.7
+		}
+		if result.Count >= 50 {
+			confidence = 0.85
+		}
+
+		// Build ValuationInput for caching
+		valuationURL := fmt.Sprintf("https://www.tradera.com/valuation?query=%s", url.QueryEscape(q))
+		if bestCategoryID > 0 {
+			valuationURL += fmt.Sprintf("&categoryId=%d", bestCategoryID)
+		}
+
+		vi := ValuationInput{
+			Type:       m.Name(),
+			Value:      price,
+			Confidence: confidence,
+			SourceURL:  valuationURL,
+			Metadata: map[string]interface{}{
+				"query":         q,
+				"category_id":   bestCategoryID,
+				"category_name": bestCategoryName,
+				"count":         result.Count,
+				"lowest_price":  result.LowestPrice,
+				"highest_price": result.HighestPrice,
+				"median_price":  result.MedianPrice,
+				"average_price": result.AveragePrice,
+			},
+			CollectedAt: time.Now(),
+		}
+
+		// Cache the individual query result
+		cacheKey := "tradera-valuation:" + q
+		traderaCache.mu.Lock()
+		traderaCache.m[cacheKey] = cacheEntry{Val: vi, Collected: time.Now()}
+		traderaCache.mu.Unlock()
+
+		prices[q] = price
+		counts[q] = result.Count
+		medians[q] = int(math.Round(result.MedianPrice))
+		averages[q] = int(math.Round(result.AveragePrice))
+		confidences[q] = confidence
+		bestCats[q] = map[string]interface{}{"category_id": bestCategoryID, "category_name": bestCategoryName}
+	}
+
+	// If we have multiple prices, compute weighted average by counts when available
+	var sum int
+	var n int
+	var totalCount int
+	var weightedSum int
+	for q, p := range prices {
+		sum += p
+		n++
+		c := counts[q]
+		totalCount += c
+		weightedSum += p * c
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("inga priser hittades på tradera för de givna sökningarna")
+	}
+	// Prefer weighted average by number of ads when we have counts; otherwise simple mean across queries
+	var avg int
+	if totalCount > 0 {
+		avg = int(math.Round(float64(weightedSum) / float64(totalCount)))
+	} else {
+		avg = sum / n
+	}
+
+	// Compute combined confidence weighted by result counts when available
+	var combinedConfidence float64
+	if totalCount > 0 {
+		var confSum float64
+		for q, c := range confidences {
+			confSum += c * float64(counts[q])
+		}
+		combinedConfidence = confSum / float64(totalCount)
+	} else {
+		// fallback: average of confidences
+		var confSum float64
+		for _, c := range confidences {
+			confSum += c
+		}
+		if len(confidences) > 0 {
+			combinedConfidence = confSum / float64(len(confidences))
+		} else {
+			combinedConfidence = 0.6
 		}
 	}
 
-	// Confidence: top-level
-	if v, ok := parsed["confidence"]; ok && v != nil {
-		switch x := v.(type) {
-		case float64:
-			confFloat = x
-		case int:
-			confFloat = float64(x)
-		case string:
-			if c, err := strconv.ParseFloat(x, 64); err == nil {
-				confFloat = c
+	// Build metadata to include both raw prices for logging
+	metadata := map[string]interface{}{"queries": []string{}}
+	qList := make([]string, 0, len(queries))
+	for _, q := range queries {
+		qList = append(qList, q)
+	}
+	metadata["queries"] = qList
+	breakdown := make(map[string]interface{})
+	for q, p := range prices {
+		srcURL := fmt.Sprintf("https://www.tradera.com/valuation?query=%s", url.QueryEscape(q))
+		if bc, ok := bestCats[q]; ok {
+			if id, ok2 := bc["category_id"].(int); ok2 && id > 0 {
+				srcURL += fmt.Sprintf("&categoryId=%d", id)
 			}
 		}
-	}
 
-	// Confidence: nested
-	if confFloat == 0 {
-		for _, parent := range []string{"data", "result", "valuation"} {
-			if pmap, ok := parsed[parent].(map[string]interface{}); ok {
-				if v, ok := pmap["confidence"]; ok && v != nil {
-					switch x := v.(type) {
-					case float64:
-						confFloat = x
-					case int:
-						confFloat = float64(x)
-					case string:
-						if c, err := strconv.ParseFloat(x, 64); err == nil {
-							confFloat = c
-						}
-					}
-					if confFloat > 0 {
-						break
-					}
-				}
-			}
+		breakdown[q] = map[string]interface{}{
+			"price":         p,
+			"median_price":  medians[q],
+			"average_price": averages[q],
+			"count":         counts[q],
+			"source_url":    srcURL,
+		}
+		if bc, ok := bestCats[q]; ok {
+			breakdown[q].(map[string]interface{})["category"] = bc
 		}
 	}
+	metadata["breakdown"] = breakdown
 
-	if confFloat > 1 {
-		confFloat = confFloat / 100.0
-	}
-
-	if priceFloat <= 0 {
-		return nil, fmt.Errorf("tradera returned no usable valuation for query: %s", query)
-	}
-
-	priceInt := int(math.Round(priceFloat))
-
-	metadata := map[string]interface{}{"raw_response": parsed}
-
+	// Construct combined ValuationInput (average saved to DB)
 	vi := ValuationInput{
 		Type:        m.Name(),
-		Value:       priceInt,
-		Confidence:  confFloat,
-		SourceURL:   u.String(),
+		Value:       avg,
+		Confidence:  combinedConfidence, // combined confidence from queries
+		SourceURL:   "",
 		Metadata:    metadata,
 		CollectedAt: time.Now(),
 	}
 
-	// Save to cache
-	traderaCache.mu.Lock()
-	traderaCache.m[cacheKey] = cacheEntry{Val: vi, Collected: time.Now()}
-	traderaCache.mu.Unlock()
-
 	return &vi, nil
+}
+
+func traderaValuationSearch(ctx context.Context, client *http.Client, apiBaseURL string, query string, categoryID int, cookies []*http.Cookie) (*traderaValuationResponse, error) {
+	u, err := url.Parse(apiBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid tradera api url: %w", err)
+	}
+	q := u.Query()
+	q.Set("query", query)
+	if categoryID > 0 {
+		q.Set("categoryId", fmt.Sprintf("%d", categoryID))
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build tradera api request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tradera api request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tradera api returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tradera api response: %w", err)
+	}
+
+	var result traderaValuationResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse tradera response: %w", err)
+	}
+	return &result, nil
+}
+
+type traderaValuationResponse struct {
+	AveragePrice float64              `json:"averagePrice"`
+	MedianPrice  float64              `json:"medianPrice"`
+	LowestPrice  float64              `json:"lowestPrice"`
+	HighestPrice float64              `json:"highestPrice"`
+	Count        int                  `json:"count"`
+	CategoryHits []traderaCategoryHit `json:"categoryHits"`
+}
+
+type traderaCategoryHit struct {
+	Count    int               `json:"count"`
+	Category []traderaCategory `json:"category"`
+}
+
+type traderaCategory struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 type SoldAdsValuationMethod struct {
