@@ -12,8 +12,8 @@
       {{ saveStatus.message }}
     </div>
 
-    <div class="card overflow-hidden">
-      <table class="table">
+    <div class="card overflow-x-auto">
+      <table class="table whitespace-nowrap">
         <thead>
           <tr>
             <th>Märke</th>
