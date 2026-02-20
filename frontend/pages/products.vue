@@ -23,6 +23,7 @@
             <th>Sammanvägd värdering</th>
             <th>Aktiverad</th>
             <th>Skapad</th>
+            <th>Senaste värdering</th>
             <th></th>
           </tr>
         </thead>
@@ -88,6 +89,12 @@
               </button>
             </td>
             <td class="text-sm text-slate-400">{{ formatDate(product.created_at) }}</td>
+            <td class="text-sm text-slate-400">
+              <template v-if="valuationsByProduct[product.id] && valuationsByProduct[product.id].length > 0">
+                {{ formatDateTime(valuationsByProduct[product.id][0].created_at) }}
+              </template>
+              <template v-else>ingen värdering</template>
+            </td>
             <td>
               <div class="flex items-center gap-3">
                 <button @click="editProduct(product)" class="text-primary-400 hover:text-primary-300">
@@ -351,6 +358,18 @@ const formatDate = (dateStr?: string | null) => {
   const date = new Date(dateStr)
   if (isNaN(date.getTime())) return '-'
   return date.toLocaleDateString('sv-SE')
+}
+
+const formatDateTime = (dateStr?: string | null) => {
+  if (!dateStr || dateStr === 'null') return '-'
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return '-'
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays === 0) return 'idag'
+  if (diffDays === 1) return '1 dag sedan'
+  return `${diffDays} dagar sedan`
 }
 
 const formatValuationAsSEK = (sek: number | null | undefined) => {
