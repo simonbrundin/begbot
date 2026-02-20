@@ -490,6 +490,8 @@ func (s *Server) productValuationTypeConfigHandler(w http.ResponseWriter, r *htt
 			api.WriteBadRequest(w, "Minst en värderingstyp måste vara aktiv")
 			return
 		}
+		// Normalize weights so active types sum to 100
+		configs = api.NormalizeWeights(configs)
 		if err := s.db.UpsertProductValuationTypeConfigs(ctx, productID, configs); err != nil {
 			api.WriteServerError(w, err.Error())
 			return

@@ -276,8 +276,10 @@ func (p *Postgres) Migrate() error {
 			product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
 			valuation_type_id SMALLINT NOT NULL REFERENCES valuation_types(id) ON DELETE CASCADE,
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			weight NUMERIC NOT NULL DEFAULT 0,
 			PRIMARY KEY (product_id, valuation_type_id)
 		)`,
+		`ALTER TABLE product_valuation_type_config ADD COLUMN IF NOT EXISTS weight NUMERIC NOT NULL DEFAULT 0`,
 	}
 
 	for i, query := range queries {
@@ -936,7 +938,7 @@ func (p *Postgres) GetValuationTypes(ctx context.Context) ([]models.ValuationTyp
 }
 
 func (p *Postgres) GetProductValuationTypeConfigs(ctx context.Context, productID int64) ([]models.ProductValuationTypeConfig, error) {
-	query := `SELECT product_id, valuation_type_id, is_active FROM product_valuation_type_config WHERE product_id = $1`
+	query := `SELECT product_id, valuation_type_id, is_active, weight FROM product_valuation_type_config WHERE product_id = $1`
 	rows, err := p.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -946,7 +948,7 @@ func (p *Postgres) GetProductValuationTypeConfigs(ctx context.Context, productID
 	var configs []models.ProductValuationTypeConfig
 	for rows.Next() {
 		var c models.ProductValuationTypeConfig
-		if err := rows.Scan(&c.ProductID, &c.ValuationTypeID, &c.IsActive); err != nil {
+		if err := rows.Scan(&c.ProductID, &c.ValuationTypeID, &c.IsActive, &c.Weight); err != nil {
 			return nil, err
 		}
 		configs = append(configs, c)
@@ -957,11 +959,11 @@ func (p *Postgres) GetProductValuationTypeConfigs(ctx context.Context, productID
 func (p *Postgres) UpsertProductValuationTypeConfigs(ctx context.Context, productID int64, configs []models.ProductValuationTypeConfig) error {
 	for _, c := range configs {
 		query := `
-			INSERT INTO product_valuation_type_config (product_id, valuation_type_id, is_active)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (product_id, valuation_type_id) DO UPDATE SET is_active = EXCLUDED.is_active
+			INSERT INTO product_valuation_type_config (product_id, valuation_type_id, is_active, weight)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (product_id, valuation_type_id) DO UPDATE SET is_active = EXCLUDED.is_active, weight = EXCLUDED.weight
 		`
-		if _, err := p.db.ExecContext(ctx, query, productID, c.ValuationTypeID, c.IsActive); err != nil {
+		if _, err := p.db.ExecContext(ctx, query, productID, c.ValuationTypeID, c.IsActive, c.Weight); err != nil {
 			return err
 		}
 	}
