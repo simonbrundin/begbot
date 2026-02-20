@@ -36,6 +36,7 @@ def find-free-port [] {
 # Gör variabler mutabla så vi kan reasignera utan skuggning
 # Lagra per-worktree portar i .dev.env för stabilitet över restarts
 let devenv_file = ".dev.env"
+let pidfile = "/tmp/dev-nu-pids"
 
 # Hantera --reset flagg (ta bort .dev.env om användaren begär)
 mut reset_requested = false
@@ -146,6 +147,11 @@ def kill-dev-ports [ports: list<int>] {
 }
 
 print "Städar upp gamla processer..."
+def kill-pid-file [path:string] {
+    try { ^bash -c $"if [ -f ($path) ]; then grep -Eo '[0-9]+' ($path) | xargs -r kill -9 2>/dev/null || true; rm -f ($path); fi" } catch { }
+}
+
+kill-pid-file $pidfile
 kill-dev-ports [$backend_port, $frontend_port, $backend_internal_port, $frontend_internal_port]
 
 # Generera nya interna portar efter cleanup
@@ -157,6 +163,9 @@ try {
     let file_content = $"BACKEND_PORT=($backend_port)\nFRONTEND_PORT=($frontend_port)\nBACKEND_INTERNAL_PORT=($backend_internal_port)\nFRONTEND_INTERNAL_PORT=($frontend_internal_port)\n"
     $file_content | save -f $devenv_file
 } catch { print "Kunde inte skriva .dev.env" }
+
+# Rensa gammal pidfile och skriv header
+try { ^bash -c $"rm -f ($pidfile) 2>/dev/null || true && echo '# dev-nu pids' > ($pidfile)" } catch { }
 
 # -----------------------------------------------
 # Välj läge
@@ -206,16 +215,16 @@ if $mode == "all" or $mode == "backend" {
 
     print $"🔧 Startar Go backend på port ($backend_port)..."
     if $have_socat == "yes" {
-        let backend_proxy_cmd = $"socat TCP-LISTEN:($backend_port),reuseaddr,fork TCP:127.0.0.1:($backend_internal_port) >/dev/null 2>&1 &"
-        ^bash -c $backend_proxy_cmd
+        try { ^bash -c $"socat TCP-LISTEN:($backend_port),reuseaddr,fork TCP:127.0.0.1:($backend_internal_port) >/dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         print $"✓ Socat proxy up: 127.0.0.1:($backend_port) -> 127.0.0.1:($backend_internal_port)"
 
-        ^bash -c $"export PORT=($backend_internal_port) && ./tmp/main > /dev/null 2>&1 &"
+        try { ^bash -c $"export PORT=($backend_internal_port) && ./tmp/main > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
+        
         print $"✓ Backend startad - intern port: ($backend_internal_port)"
         print $"✓ Backend publik URL: ($backend_url)"
     } else {
-        ^bash -c $"export PORT=($backend_port) && ./tmp/main > /dev/null 2>&1 &"
+        try { ^bash -c $"export PORT=($backend_port) && ./tmp/main > /dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         let backend_url = $"http://($local_ip):($backend_port)"
         print $"✓ Backend startad: ($backend_url)"
     }
@@ -228,22 +237,21 @@ if $mode == "all" or $mode == "frontend" {
     let log_file = "/tmp/nuxt-dev.log"
     if $have_socat == "yes" {
         # Bind publik frontend_port via socat till en intern port där Nuxt startas
-        let frontend_proxy_cmd = $"socat TCP-LISTEN:($frontend_port),reuseaddr,fork TCP:127.0.0.1:($frontend_internal_port) >/dev/null 2>&1 &"
-        ^bash -c $frontend_proxy_cmd
+        try { ^bash -c $"socat TCP-LISTEN:($frontend_port),reuseaddr,fork TCP:127.0.0.1:($frontend_internal_port) >/dev/null 2>&1 & echo $! >> ($pidfile)" } catch { }
         print $"✓ Socat proxy up: 127.0.0.1:($frontend_port) -> 127.0.0.1:($frontend_internal_port)"
 
         # Starta Nuxt så den lyssnar på internal-port och pekar mot backend publik-port
-        ^bash -c $"export PORT=($frontend_internal_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev > ($log_file) 2>&1 &"
+        try { ^bash -c $"export PORT=($frontend_internal_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev > ($log_file) 2>&1 & echo $! >> ($pidfile)" } catch { }
         # Vänta lite så Nuxt hinner starta
-        sleep 0.5sec
+        sleep 500ms
         $actual_frontend_url = $"http://($local_ip):($frontend_port)"
         print $"✓ Frontend startad - intern port: ($frontend_internal_port)"
         print $"✓ Frontend publik URL: ($actual_frontend_url)"
         try { ^bash -c $"xdg-open ($actual_frontend_url) >/dev/null 2>&1 &" } catch { }
     } else {
         # Fallback: starta direkt på publik port
-        ^bash -c $"export PORT=($frontend_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev > ($log_file) 2>&1 &"
-        sleep 0.5sec
+        try { ^bash -c $"export PORT=($frontend_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev > ($log_file) 2>&1 & echo $! >> ($pidfile)" } catch { }
+        sleep 500ms
         $actual_frontend_url = $"http://($local_ip):($frontend_port)"
         print $"✓ Frontend startad: ($actual_frontend_url)"
         try { ^bash -c $"xdg-open ($actual_frontend_url) >/dev/null 2>&1 &" } catch { }
@@ -272,4 +280,44 @@ print "\n✅ Utvecklingsservrar körs!"
 print $"   Backend: ($backend_url)"
 print $"   Frontend: ($final_frontend_url)"
 print $"   .dev.env: ($devenv_file)"
-print $"\nFör att stoppa: kör om dev.nu, eller döda portarna manuellt: lsof -i :($backend_port) -t | xargs kill -9"
+print "\n⌨️  Tryck [q] för att stoppa alla servrar...\n"
+
+# -----------------------------------------------
+# Håll skriptet aktivt – vänta på 'q' eller att servrarna dör
+# -----------------------------------------------
+
+let ports = [$backend_port $frontend_port $backend_internal_port $frontend_internal_port]
+
+# Detect once if we have a TTY to avoid trying /dev/tty repeatedly in non-interactive environments
+let have_tty = (try { ^bash -c "if [ -t 0 ]; then echo yes; else echo no; fi" | str trim } catch { "no" })
+
+while true {
+    mut any_running = false
+    for $p in $ports {
+        if $p == 0 { continue }
+        let out = (try { ^bash -c $"lsof -i :($p) -t 2>/dev/null | wc -l" | str trim } catch { "0" })
+        let cnt = (try { ($out | into int) } catch { 0 })
+        if $cnt > 0 { $any_running = true }
+    }
+
+    if not $any_running {
+        print ''
+        print '⚠️  Alla servrar har stoppat.'
+        break
+    }
+
+    if $have_tty == "yes" {
+        let key = (try { ^bash -c "IFS= read -r -s -t 1 -n 1 key </dev/tty 2>/dev/null && printf '%s' \"$key\" || true" | str trim } catch { "" })
+        if $key != "" {
+            if ($key == 'q') or ($key == 'Q') {
+                print ''
+                print '🛑 Stoppar alla servrar...'
+                for $p in $ports { if $p == 0 { continue } ; try { ^bash -c $"lsof -i :($p) -t 2>/dev/null | xargs -r kill -9 2>/dev/null" } catch { } }
+                print '✓ Klart.'
+                break
+            }
+        }
+    }
+
+    sleep 1sec
+}
