@@ -522,6 +522,21 @@ func (p *Postgres) UpdateProduct(ctx context.Context, product *models.Product) e
 	return err
 }
 
+func (p *Postgres) DeleteProduct(ctx context.Context, id int64) error {
+	result, err := p.db.ExecContext(ctx, `DELETE FROM products WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*models.Product, error) {
 	query := `
 		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
