@@ -470,6 +470,10 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(product)
 	case "DELETE":
+		if err := s.db.DeleteProduct(r.Context(), id); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
 		w.WriteHeader(204)
 	}
 }

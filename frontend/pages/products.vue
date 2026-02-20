@@ -95,6 +95,9 @@
                 <button @click="editProduct(product)" class="text-primary-400 hover:text-primary-300">
                   Redigera
                 </button>
+                <button @click="deletingProduct = product" class="text-red-400 hover:text-red-300">
+                  Ta bort
+                </button>
                 <button
                   @click="collectValuations(product.id)"
                   :disabled="collectingProducts.has(product.id)"
@@ -201,11 +204,24 @@
         </form>
       </div>
     </div>
+
+    <!-- Delete confirmation modal -->
+    <ConfirmModal
+      v-if="deletingProduct"
+      :show="!!deletingProduct"
+      title="Ta bort produkt"
+      :message="`Är du säker på att du vill ta bort produkten &quot;${deletingProduct.brand || ''} ${deletingProduct.name || ''}&quot;? Detta kommer också ta bort alla relaterade värderingar och kan påverka annonser och handlade objekt.`"
+      confirm-text="Ta bort"
+      cancel-text="Avbryt"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import type { Product, Valuation, ValuationType, ProductValuationTypeConfig } from '~/types/database'
+import ConfirmModal from '~/components/ConfirmModal.vue'
 
 const api = useApi()
 
@@ -220,6 +236,7 @@ const collectingProducts = ref<Set<number>>(new Set())
 const collectLog = ref<{ loading: boolean; results: { type: string; value: number; source_url?: string; error?: string; count?: number }[] } | null>(null)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
+const deletingProduct = ref<Product | null>(null)
 
 // Per-product valuation type active states in edit form (typeId -> isActive)
 const editingValuationTypeActive = ref<Record<number, boolean>>({})
@@ -412,6 +429,23 @@ const closeModal = () => {
   editingProduct.value = null
   form.value = { ...defaultForm }
   editingValuationTypeActive.value = {}
+}
+
+const confirmDelete = async () => {
+  if (!deletingProduct.value) return
+  try {
+    await api.delete(`/products/${deletingProduct.value.id}`)
+    deletingProduct.value = null
+    await fetchData()
+    showSaveStatus('success', 'Produkt borttagen')
+  } catch (e) {
+    console.error('Failed to delete product:', e)
+    showSaveStatus('error', 'Kunde inte ta bort produkten')
+  }
+}
+
+const cancelDelete = () => {
+  deletingProduct.value = null
 }
 
 const saveProduct = async () => {
