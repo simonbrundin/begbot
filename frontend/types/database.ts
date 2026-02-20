@@ -157,6 +157,7 @@ export interface ProductValuationTypeConfig {
   product_id: number
   valuation_type_id: number
   is_active: boolean
+  weight: number
 }
 
 export interface ListingWithDetails {

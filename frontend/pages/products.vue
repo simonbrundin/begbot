@@ -12,20 +12,6 @@
       {{ saveStatus.message }}
     </div>
 
-    <div class="mb-4">
-      <button @click="showWeightConfig = !showWeightConfig" class="text-sm text-slate-400 hover:text-slate-200 flex items-center gap-1">
-        <span>Vikter för sammanvägd värdering</span>
-        <span>{{ showWeightConfig ? '▲' : '▼' }}</span>
-      </button>
-      <div v-if="showWeightConfig" class="mt-2 card p-4 flex flex-wrap gap-4">
-        <div v-for="vt in enabledValuationTypes" :key="vt.id" class="flex items-center gap-2">
-          <label class="text-sm text-slate-300">{{ vt.name }}</label>
-          <input v-model.number="weights[vt.id]" type="number" min="0" step="0.1" class="input w-20 py-1 text-sm" />
-        </div>
-        <div v-if="enabledValuationTypes.length === 0" class="text-sm text-slate-400">Inga aktiverade värderingstyper.</div>
-      </div>
-    </div>
-
     <div class="card overflow-hidden">
       <table class="table">
         <thead>
@@ -47,6 +33,17 @@
             <td>{{ product.category || '-' }}</td>
             <template v-for="vt in enabledValuationTypes" :key="vt.id">
               <td class="text-sm" :class="{ 'opacity-40': !isTypeActiveForProduct(product.id, vt.id) }">
+                <!-- Inline active/inactive toggle badge -->
+                <div class="flex items-center gap-1 mb-1">
+                  <button
+                    @click.stop="toggleTypeForProduct(product.id, vt.id)"
+                    :class="isTypeActiveForProduct(product.id, vt.id)
+                      ? 'text-xs text-emerald-400 hover:text-emerald-300'
+                      : 'text-xs text-slate-500 hover:text-slate-400'"
+                    :title="isTypeActiveForProduct(product.id, vt.id) ? 'Inaktivera typ' : 'Aktivera typ'"
+                  >{{ isTypeActiveForProduct(product.id, vt.id) ? '●' : '○' }}</button>
+                  <span v-if="isTypeActiveForProduct(product.id, vt.id)" class="text-xs text-slate-500">{{ getWeightForType(product.id, vt.id).toFixed(0) }}%</span>
+                </div>
                 <div v-if="valuationsByProduct[product.id]">
                   <template v-if="isEditingValuation(product.id, vt.id)">
                     <div class="flex items-center gap-2">
@@ -187,18 +184,6 @@ const editingProduct = ref<Product | null>(null)
 // Per-product valuation type active states in edit form (typeId -> isActive)
 const editingValuationTypeActive = ref<Record<number, boolean>>({})
 
-// Weights for sammanvägd värdering (keyed by valuation type id, default 1)
-const weights = ref<Record<number, number>>({})
-const showWeightConfig = ref(false)
-
-watch(valuationTypes, (types) => {
-  types.forEach(vt => {
-    if (vt.enabled !== false && weights.value[vt.id] === undefined) {
-      weights.value[vt.id] = 1
-    }
-  })
-}, { immediate: true })
-
 // Check if a valuation type is active for a product (defaults to true when no config)
 const isTypeActiveForProduct = (productId: number, typeId: number): boolean => {
   const configs = valuationConfigsByProduct.value[productId]
@@ -208,13 +193,30 @@ const isTypeActiveForProduct = (productId: number, typeId: number): boolean => {
   return config.is_active
 }
 
+// Get weight for a type for a product; falls back to equal distribution when no config
+const getWeightForType = (productId: number, typeId: number): number => {
+  const configs = valuationConfigsByProduct.value[productId]
+  if (!configs || configs.length === 0) {
+    const n = enabledValuationTypes.value.length
+    return n > 0 ? 100 / n : 0
+  }
+  const config = configs.find(c => c.valuation_type_id === typeId)
+  if (!config || !config.is_active) return 0
+  // If weight not stored yet (0), compute equal share among active types
+  if (config.weight <= 0) {
+    const activeCount = configs.filter(c => c.is_active).length
+    return activeCount > 0 ? 100 / activeCount : 0
+  }
+  return config.weight
+}
+
 const computeWeightedValuation = (productId: number): { average: number; safetyPercent: number } | null => {
   const activeTypes = enabledValuationTypes.value.filter(vt => isTypeActiveForProduct(productId, vt.id))
   if (activeTypes.length === 0) return null
   const entries = activeTypes
     .map(vt => {
       const v = getValuationForType(productId, vt.id)
-      return v !== null ? { valuation: v.valuation, weight: weights.value[vt.id] ?? 1 } : null
+      return v !== null ? { valuation: v.valuation, weight: getWeightForType(productId, vt.id) } : null
     })
     .filter((e): e is { valuation: number; weight: number } => e !== null)
   if (entries.length === 0) return null
@@ -357,12 +359,20 @@ const saveProduct = async () => {
           showSaveStatus('error', 'Minst en värderingstyp måste vara aktiv')
           return
         }
-        const configs: ProductValuationTypeConfig[] = enabledValuationTypes.value.map(vt => ({
-          product_id: editingProduct.value!.id,
-          valuation_type_id: vt.id,
-          is_active: editingValuationTypeActive.value[vt.id] ?? true
-        }))
-        await api.put(`/products/${editingProduct.value.id}/valuation-type-config`, { configs } as any)
+        const existingConfigs = valuationConfigsByProduct.value[editingProduct.value.id] || []
+        const configs: ProductValuationTypeConfig[] = enabledValuationTypes.value.map(vt => {
+          const existing = existingConfigs.find(c => c.valuation_type_id === vt.id)
+          return {
+            product_id: editingProduct.value!.id,
+            valuation_type_id: vt.id,
+            is_active: editingValuationTypeActive.value[vt.id] ?? true,
+            weight: existing?.weight ?? 0
+          }
+        })
+        const result = await api.put<ProductValuationTypeConfig[]>(`/products/${editingProduct.value.id}/valuation-type-config`, { configs } as any)
+        if (Array.isArray(result)) {
+          valuationConfigsByProduct.value[editingProduct.value.id] = result
+        }
       }
     } else {
       await api.post('/products', form.value)
@@ -371,6 +381,45 @@ const saveProduct = async () => {
     await fetchData()
   } catch (e) {
     console.error('Failed to save product:', e)
+  }
+}
+
+// Toggle a single valuation type active/inactive for a product inline
+const toggleTypeForProduct = async (productId: number, typeId: number) => {
+  const currentlyActive = isTypeActiveForProduct(productId, typeId)
+
+  // Prevent deactivating the last active type
+  if (currentlyActive) {
+    const activeCount = enabledValuationTypes.value.filter(vt => isTypeActiveForProduct(productId, vt.id)).length
+    if (activeCount <= 1) {
+      showSaveStatus('error', 'Minst en värderingstyp måste vara aktiv')
+      return
+    }
+  }
+
+  const currentConfigs = valuationConfigsByProduct.value[productId] || []
+  const newConfigs: ProductValuationTypeConfig[] = enabledValuationTypes.value.map(vt => {
+    const existing = currentConfigs.find(c => c.valuation_type_id === vt.id)
+    const isActive = vt.id === typeId ? !currentlyActive : isTypeActiveForProduct(productId, vt.id)
+    return {
+      product_id: productId,
+      valuation_type_id: vt.id,
+      is_active: isActive,
+      weight: existing?.weight ?? 0
+    }
+  })
+
+  try {
+    const result = await api.put<ProductValuationTypeConfig[]>(
+      `/products/${productId}/valuation-type-config`,
+      { configs: newConfigs } as any
+    )
+    if (Array.isArray(result)) {
+      valuationConfigsByProduct.value[productId] = result
+    }
+    showSaveStatus('success', currentlyActive ? 'Typ inaktiverad' : 'Typ aktiverad')
+  } catch (e: any) {
+    showSaveStatus('error', e?.message || 'Kunde inte spara konfiguration')
   }
 }
 

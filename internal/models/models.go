@@ -155,9 +155,10 @@ type ValuationType struct {
 }
 
 type ProductValuationTypeConfig struct {
-	ProductID       int64 `json:"product_id" db:"product_id"`
-	ValuationTypeID int16 `json:"valuation_type_id" db:"valuation_type_id"`
-	IsActive        bool  `json:"is_active" db:"is_active"`
+	ProductID       int64   `json:"product_id" db:"product_id"`
+	ValuationTypeID int16   `json:"valuation_type_id" db:"valuation_type_id"`
+	IsActive        bool    `json:"is_active" db:"is_active"`
+	Weight          float64 `json:"weight" db:"weight"`
 }
 
 type Valuation struct {
