@@ -23,6 +23,7 @@
             <th>Sammanvägd värdering</th>
             <th>Aktiverad</th>
             <th>Skapad</th>
+            <th>Senast värderad</th>
             <th></th>
           </tr>
         </thead>
@@ -88,6 +89,7 @@
               </button>
             </td>
             <td class="text-sm text-slate-400">{{ formatDate(product.created_at) }}</td>
+            <td class="text-sm text-slate-400">{{ getDaysSinceValuation(product.id) }}</td>
             <td>
               <div class="flex items-center gap-3">
                 <button @click="editProduct(product)" class="text-primary-400 hover:text-primary-300">
@@ -278,6 +280,25 @@ const weightedValuations = computed(() => {
   }
   return result
 })
+
+const getDaysSinceValuation = (productId: number): string => {
+  const valuations = valuationsByProduct.value[productId]
+  if (!valuations || valuations.length === 0) {
+    return 'Ingen värdering'
+  }
+  const latestValuation = valuations[0]
+  if (!latestValuation?.created_at) {
+    return 'Ingen värdering'
+  }
+  const created = new Date(latestValuation.created_at)
+  const now = new Date()
+  const diffMs = now.getTime() - created.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays === 0) {
+    return 'Idag'
+  }
+  return `${diffDays} dagar sedan`
+}
 
 const defaultForm = {
   brand: '',
