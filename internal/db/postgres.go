@@ -221,10 +221,6 @@ func (p *Postgres) Migrate() error {
 				(3, 'eBay'),
 				(4, 'Nypris (LLM)')
 			ON CONFLICT (id) DO NOTHING`,
-		`ALTER TABLE IF EXISTS valuation_types ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE`,
-		`ALTER TABLE valuations ADD COLUMN IF NOT EXISTS listing_id INTEGER REFERENCES listings(id) ON DELETE CASCADE`,
-		`CREATE INDEX IF NOT EXISTS idx_valuations_listing_id ON valuations(listing_id)`,
-		`UPDATE valuations SET listing_id = NULL WHERE listing_id IS NULL`,
 		`CREATE TABLE IF NOT EXISTS scraping_runs (
 			id SERIAL PRIMARY KEY,
 			started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1054,33 +1050,7 @@ func (p *Postgres) GetValuationsWithTypesByProductID(ctx context.Context, produc
 	return valuations, rows.Err()
 }
 
-func (p *Postgres) GetValuationsWithTypesByListingID(ctx context.Context, listingID int64) ([]ValuationWithType, error) {
-	query := `
-		SELECT v.id, v.valuation_type_id, vt.name, v.valuation
-		FROM valuations v
-		JOIN valuation_types vt ON v.valuation_type_id = vt.id
-		WHERE v.listing_id = $1
-		ORDER BY v.created_at DESC
-	`
-	rows, err := p.db.QueryContext(ctx, query, listingID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var valuations []ValuationWithType
-	for rows.Next() {
-		var v ValuationWithType
-		if err := rows.Scan(&v.ID, &v.ValuationTypeID, &v.ValuationType, &v.Valuation); err != nil {
-			return nil, err
-		}
-		valuations = append(valuations, v)
-	}
-	return valuations, rows.Err()
-}
-
 func (p *Postgres) GetValuationsForListing(ctx context.Context, listingID int64) ([]ValuationWithType, error) {
-	// First get the listing to get the product ID
 	listing, err := p.GetListingByID(ctx, listingID)
 	if err != nil {
 		return nil, err
@@ -1089,43 +1059,11 @@ func (p *Postgres) GetValuationsForListing(ctx context.Context, listingID int64)
 		return nil, fmt.Errorf("listing not found")
 	}
 
-	// Get listing-specific valuations (these take priority)
-	listingVals, err := p.GetValuationsWithTypesByListingID(ctx, listingID)
-	if err != nil {
-		return nil, err
+	if listing.ProductID == nil {
+		return []ValuationWithType{}, nil
 	}
 
-	// For product-wide valuations, get only the latest one per type
-	var productVals []ValuationWithType
-	if listing != nil && listing.ProductID != nil {
-		productVals, err = p.GetLatestValuationByTypeForProduct(ctx, *listing.ProductID)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Combine and ensure only one valuation per type, preferring listing-specific
-	result := make([]ValuationWithType, 0)
-	valuationMap := make(map[int16]ValuationWithType)
-
-	// First add all listing-specific valuations
-	for _, v := range listingVals {
-		valuationMap[v.ValuationTypeID] = v
-	}
-
-	// Then add product-wide valuations only if type not already covered
-	for _, v := range productVals {
-		if _, exists := valuationMap[v.ValuationTypeID]; !exists {
-			valuationMap[v.ValuationTypeID] = v
-		}
-	}
-
-	// Convert map to slice
-	for _, v := range valuationMap {
-		result = append(result, v)
-	}
-
-	return result, nil
+	return p.GetLatestValuationByTypeForProduct(ctx, *listing.ProductID)
 }
 
 func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listing, error) {
@@ -1151,19 +1089,18 @@ func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listin
 	return &listing, nil
 }
 
-func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation, listingID *int64) error {
+func (p *Postgres) CreateValuation(ctx context.Context, v *models.Valuation) error {
 	query := `
-        INSERT INTO valuations (product_id, listing_id, valuation_type_id, valuation, metadata)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO valuations (product_id, valuation_type_id, valuation, metadata)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (product_id, valuation_type_id) DO UPDATE
           SET valuation = EXCLUDED.valuation,
               metadata = EXCLUDED.metadata,
-              listing_id = EXCLUDED.listing_id,
               created_at = NOW()
         RETURNING id, created_at
     `
 
-	err := p.db.QueryRowContext(ctx, query, v.ProductID, listingID, v.ValuationTypeID, v.Valuation, v.Metadata).
+	err := p.db.QueryRowContext(ctx, query, v.ProductID, v.ValuationTypeID, v.Valuation, v.Metadata).
 		Scan(&v.ID, &v.CreatedAt)
 	return err
 }
@@ -1220,7 +1157,7 @@ func (p *Postgres) GetLatestValuationByTypeForProduct(ctx context.Context, produ
 			v.id, v.valuation_type_id, vt.name, v.valuation
 		FROM valuations v
 		JOIN valuation_types vt ON v.valuation_type_id = vt.id
-		WHERE v.product_id = $1 AND v.listing_id IS NULL
+		WHERE v.product_id = $1
 		ORDER BY v.valuation_type_id, v.created_at DESC
 	`
 	rows, err := p.db.QueryContext(ctx, query, productID)
@@ -1254,8 +1191,10 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 		return 0, err
 	}
 	activeMap := make(map[int16]bool)
+	weightMap := make(map[int16]float64)
 	for _, c := range configs {
 		activeMap[c.ValuationTypeID] = c.IsActive
+		weightMap[c.ValuationTypeID] = c.Weight
 	}
 
 	enabledTypes, err := p.GetValuationTypes(ctx)
@@ -1269,8 +1208,7 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 		}
 	}
 
-	total := 0
-	count := 0
+	activeCount := 0
 	for _, v := range valuations {
 		if !enabledMap[v.ValuationTypeID] {
 			continue
@@ -1278,14 +1216,34 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
 			continue
 		}
-		total += v.Valuation
-		count++
+		activeCount++
 	}
 
-	if count == 0 {
+	total := 0.0
+	totalWeight := 0.0
+	for _, v := range valuations {
+		if !enabledMap[v.ValuationTypeID] {
+			continue
+		}
+		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
+			continue
+		}
+		weight := weightMap[v.ValuationTypeID]
+		if weight <= 0 {
+			if activeCount > 0 {
+				weight = 100.0 / float64(activeCount)
+			} else {
+				weight = 1.0
+			}
+		}
+		total += float64(v.Valuation) * weight
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
 		return 0, nil
 	}
-	return total / count, nil
+	return int(total / totalWeight), nil
 }
 
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {

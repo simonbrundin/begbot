@@ -1264,8 +1264,7 @@ func (s *Server) valuationsHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteValidationError(w, errs)
 			return
 		}
-		// For now, create valuations without listing ID (backward compatibility)
-		if err := s.db.CreateValuation(ctx, &v, nil); err != nil {
+		if err := s.db.CreateValuation(ctx, &v); err != nil {
 			api.WriteServerError(w, err.Error())
 			return
 		}
