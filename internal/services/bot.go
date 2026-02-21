@@ -366,7 +366,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	// Save individual valuations to the database
 	if len(valInputs) > 0 {
 		productIDStr := fmt.Sprintf("%d", productID)
-		if err := s.valuationService.SaveValuationsWithListingID(ctx, productIDStr, valInputs, &listing.ID); err != nil {
+		if err := s.valuationService.SaveValuations(ctx, productIDStr, valInputs); err != nil {
 			s.log(LogLevelWarning, "Failed to save valuations: %v", err)
 		}
 	}

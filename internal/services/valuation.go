@@ -151,10 +151,6 @@ func (s *ValuationService) Compile(ctx context.Context, inputs []ValuationInput)
 }
 
 func (s *ValuationService) SaveValuations(ctx context.Context, productID string, inputs []ValuationInput) error {
-	return s.SaveValuationsWithListingID(ctx, productID, inputs, nil)
-}
-
-func (s *ValuationService) SaveValuationsWithListingID(ctx context.Context, productID string, inputs []ValuationInput, listingID *int64) error {
 	var firstErr error
 	for _, input := range inputs {
 		metadataJSON, err := json.Marshal(input.Metadata)
@@ -181,7 +177,7 @@ func (s *ValuationService) SaveValuationsWithListingID(ctx context.Context, prod
 			ValuationTypeID: &vid,
 			Valuation:       int(input.Value),
 			Metadata:        metadataJSON,
-		}, listingID)
+		})
 		if err != nil {
 			log.Printf("Failed to save valuation for method %s: %v", input.Type, err)
 			if firstErr == nil {
