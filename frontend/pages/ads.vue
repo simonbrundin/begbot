@@ -303,11 +303,19 @@ const errorMessage = computed(() => {
                 </p>
                 <p class="text-sm text-slate-400">
                   Värdering:
-                  {{
-                    item.ComputedValuation
-                      ? formatValuationAsSEK(item.ComputedValuation)
-                      : "-"
-                  }}
+                  <template v-if="item.ComputedValuation">
+                    <span class="badge badge-info">
+                      {{ formatValuationAsSEK(item.ComputedValuation) }}
+                    </span>
+                    <span 
+                      v-if="item.ValuationConfidence !== undefined" 
+                      class="text-xs text-slate-400 ml-1"
+                      :title="`Säkerhetsprocent baserat på spridning mellan värderingstyper`"
+                    >
+                      {{ Math.round(item.ValuationConfidence) }}%
+                    </span>
+                  </template>
+                  <template v-else>-</template>
                 </p>
                 <div v-if="item.Valuations && item.Valuations.filter(v => v.valuation_type_id !== 4).length > 0" class="mt-1">
                   <p class="text-xs text-slate-500 mb-1">Delvärderingar:</p>

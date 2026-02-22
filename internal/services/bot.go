@@ -510,7 +510,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 	// Use computed product-level valuation; fall back to listing.Valuation when DB is unavailable
 	computedValuation := listing.Valuation
 	if listing.ProductID != nil && s.database != nil {
-		if cv, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
+		if cv, _, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
 			computedValuation = cv
 		}
 	}

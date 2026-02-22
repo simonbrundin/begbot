@@ -167,6 +167,7 @@ export interface ListingWithDetails {
   PotentialProfit?: number
   DiscountPercent?: number
   ComputedValuation?: number
+  ValuationConfidence?: number
 }
 
 export const TRADE_STATUSES: Record<number, string> = {
