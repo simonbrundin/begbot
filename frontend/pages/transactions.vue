@@ -55,6 +55,15 @@
       </table>
     </div>
 
+    <PaginationControls
+      v-if="totalPages > 1"
+      :page="page"
+      :page-size="pageSize"
+      :total-count="totalCount"
+      :total-pages="totalPages"
+      @update:page="loadPage"
+    />
+
     <div v-if="showAddModal" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
       <div class="bg-slate-800 rounded-lg p-6 w-full max-w-md border border-slate-700">
         <h2 class="text-xl font-bold text-slate-100 mb-4">Lägg till transaktion</h2>
@@ -93,12 +102,25 @@
 <script setup lang="ts">
 import type { Transaction, TransactionType } from '~/types/database'
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 const api = useApi()
 
 const transactions = ref<Transaction[]>([])
 const transactionTypes = ref<TransactionType[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
+
+const page = ref(1)
+const pageSize = ref(20)
+const totalCount = ref(0)
+const totalPages = ref(0)
 
 const form = ref({
   date: new Date().toISOString().split('T')[0],
@@ -121,17 +143,28 @@ const netAmount = computed(() =>
 const fetchData = async () => {
   loading.value = true
   try {
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString()
+    })
     const [txRes, typesRes] = await Promise.all([
-      api.get<Transaction[]>('/transactions'),
+      api.get<PaginatedResponse<Transaction>>(`/transactions?${params}`),
       api.get<TransactionType[]>('/transaction-types')
     ])
-    transactions.value = txRes
+    transactions.value = txRes.data
+    totalCount.value = txRes.total_count
+    totalPages.value = txRes.total_pages
     transactionTypes.value = typesRes
   } catch (e) {
     console.error('Failed to fetch data:', e)
   } finally {
     loading.value = false
   }
+}
+
+const loadPage = async (newPage: number) => {
+  page.value = newPage
+  await fetchData()
 }
 
 const formatCurrency = (cents: number) => `${(cents / 100).toFixed(2)} kr`

@@ -55,6 +55,15 @@
       Inga annonser hittades. Lägg till din första annons!
     </div>
 
+    <PaginationControls
+      v-if="totalPages > 1"
+      :page="page"
+      :page-size="pageSize"
+      :total-count="totalCount"
+      :total-pages="totalPages"
+      @update:page="loadPage"
+    />
+
     <div v-if="showAddModal || editingListing" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
       <div class="bg-slate-800 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto border border-slate-700">
         <h2 class="text-xl font-bold text-slate-100 mb-4">
@@ -121,6 +130,14 @@
 import type { Listing, Product, Marketplace } from '~/types/database'
 import { LISTING_STATUSES } from '~/types/database'
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 const api = useApi()
 
 const listings = ref<Listing[]>([])
@@ -129,6 +146,11 @@ const marketplaces = ref<Marketplace[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
 const editingListing = ref<Listing | null>(null)
+
+const page = ref(1)
+const pageSize = ref(20)
+const totalCount = ref(0)
+const totalPages = ref(0)
 
 const defaultForm = {
   product_id: null as number | null,
@@ -145,12 +167,19 @@ const form = ref({ ...defaultForm })
 const fetchData = async () => {
   loading.value = true
   try {
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString(),
+      mine: 'true'
+    })
     const [listingsRes, productsRes, marketplacesRes] = await Promise.all([
-      api.get<Listing[]>('/listings?mine=true'),
+      api.get<PaginatedResponse<Listing>>(`/listings?${params}`),
       api.get<Product[]>('/products'),
       api.get<Marketplace[]>('/marketplaces')
     ])
-    listings.value = listingsRes
+    listings.value = listingsRes.data
+    totalCount.value = listingsRes.total_count
+    totalPages.value = listingsRes.total_pages
     products.value = productsRes
     marketplaces.value = marketplacesRes
   } catch (e) {
@@ -158,6 +187,11 @@ const fetchData = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const loadPage = async (newPage: number) => {
+  page.value = newPage
+  await fetchData()
 }
 
 const formatCurrency = (cents: number) => `${(cents / 100).toFixed(2)} kr`

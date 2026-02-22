@@ -49,6 +49,15 @@
         </div>
       </div>
     </div>
+
+    <PaginationControls
+      v-if="totalPages > 1"
+      :page="page"
+      :page-size="pageSize"
+      :total-count="totalCount"
+      :total-pages="totalPages"
+      @update:page="loadPage"
+    />
   </div>
 </template>
 
@@ -68,23 +77,48 @@ interface Conversation {
   pending_count: number
 }
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 const api = useApi()
 const conversations = ref<Conversation[]>([])
 const loading = ref(true)
 const showNeedsReview = ref(true)
 
+const page = ref(1)
+const pageSize = ref(20)
+const totalCount = ref(0)
+const totalPages = ref(0)
+
 const fetchConversations = async () => {
   loading.value = true
   try {
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString()
+    })
     const endpoint = showNeedsReview.value 
-      ? '/conversations?needs_review=true'
-      : '/conversations'
-    conversations.value = await api.get<Conversation[]>(endpoint)
+      ? `/conversations?needs_review=true&${params}`
+      : `/conversations?${params}`
+    const response = await api.get<PaginatedResponse<Conversation>>(endpoint)
+    conversations.value = response.data
+    totalCount.value = response.total_count
+    totalPages.value = response.total_pages
   } catch (error) {
     console.error('Failed to fetch conversations:', error)
   } finally {
     loading.value = false
   }
+}
+
+const loadPage = async (newPage: number) => {
+  page.value = newPage
+  await fetchConversations()
 }
 
 const formatCurrency = (amount: number) => {
@@ -112,6 +146,7 @@ const statusClass = (status: string) => {
 }
 
 watch(showNeedsReview, () => {
+  page.value = 1
   fetchConversations()
 })
 
