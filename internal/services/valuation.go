@@ -28,6 +28,7 @@ const (
 	ValuationTypeMarketplace = "eBay/Marknadsplatser"
 	ValuationTypeLLMNewPrice = "Nypris (LLM)"
 	ValuationTypeBlocket     = "Blocket"
+	ValuationTypeManual      = "Manuell"
 )
 
 type ValuationMethod interface {
@@ -235,8 +236,10 @@ func (s *ValuationService) getValuationTypeID(typeName string) int16 {
 		return 3
 	case ValuationTypeLLMNewPrice:
 		return 4
-	case ValuationTypeBlocket:
+	case ValuationTypeManual:
 		return 5
+	case ValuationTypeBlocket:
+		return 6
 	default:
 		return 0
 	}
