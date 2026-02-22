@@ -299,7 +299,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	// Only use LLM's shipping cost if Blocket API didn't provide one
 	if item.BuyShippingCost == 0 && productInfo.ShippingCost > 0 {
 		item.BuyShippingCost = int(productInfo.ShippingCost)
-		s.log(LogLevelInfo, "Using LLM shipping cost: %d", productInfo.ShippingCost)
+		s.log(LogLevelInfo, "Using LLM shipping cost: %.0f", productInfo.ShippingCost)
 	}
 
 	// Log final shipping cost
@@ -419,7 +419,7 @@ func (s *BotService) evaluateItem(ctx context.Context, item *models.TradedItem, 
 
 	estimatedSellPrice := s.valuationService.CalculatePriceForDays(s.cfg.Valuation.TargetSellDays, historicalValuation)
 
-	totalCost := item.BuyPrice + item.BuyShippingCost
+	totalCost := item.BuyPrice + item.BuyShippingCost + item.BuyShippingInsurance
 	estimatedProfit := int(estimatedSellPrice) - totalCost
 	profitMargin := float64(estimatedProfit) / float64(totalCost)
 	shouldBuy := s.valuationService.ShouldBuy(profitMargin)

@@ -1449,7 +1449,11 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context, limit, offset int)
 			if l.ShippingCost != nil {
 				shippingCost = *l.ShippingCost
 			}
-			profit := computedVal - *l.Price - shippingCost
+			insuranceCost := 0
+			if l.ShippingInsurance != nil {
+				insuranceCost = *l.ShippingInsurance
+			}
+			profit := computedVal - *l.Price - shippingCost - insuranceCost
 			listingWithP.PotentialProfit = profit
 
 			if computedVal > 0 {
@@ -1516,7 +1520,11 @@ func (p *Postgres) GetPotentialListings(ctx context.Context, limit, offset int) 
 			if l.ShippingCost != nil {
 				shippingCost = *l.ShippingCost
 			}
-			profit := computedVal - *l.Price - shippingCost
+			insuranceCost := 0
+			if l.ShippingInsurance != nil {
+				insuranceCost = *l.ShippingInsurance
+			}
+			profit := computedVal - *l.Price - shippingCost - insuranceCost
 			discountPercent := float64(profit) / float64(computedVal) * 100
 
 			if profit >= minProfit && discountPercent >= float64(minDiscount) {
