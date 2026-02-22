@@ -190,6 +190,11 @@ func (s *ValuationService) Compile(ctx context.Context, inputs []ValuationInput)
 func (s *ValuationService) SaveValuations(ctx context.Context, productID string, inputs []ValuationInput) error {
 	var firstErr error
 	for _, input := range inputs {
+		// Skip if this valuation type is not enabled
+		if !valuationTypeEnabled[input.Type] {
+			continue
+		}
+
 		metadataJSON, err := json.Marshal(input.Metadata)
 		if err != nil {
 			metadataJSON = []byte("{}")
