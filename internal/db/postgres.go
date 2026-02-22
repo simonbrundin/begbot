@@ -115,7 +115,8 @@ func (p *Postgres) Migrate() error {
 		`CREATE TABLE IF NOT EXISTS trading_rules (
 			id SERIAL PRIMARY KEY,
 			min_profit_sek INTEGER,
-			min_discount SMALLINT
+			min_discount SMALLINT,
+			min_confidence SMALLINT DEFAULT 80
 		)`,
 		`CREATE TABLE IF NOT EXISTS traded_items (
 			id SERIAL PRIMARY KEY,
@@ -1354,20 +1355,22 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 }
 
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
-	query := `SELECT id, min_profit_sek, min_discount FROM trading_rules LIMIT 1`
+	query := `SELECT id, min_profit_sek, min_discount, COALESCE(min_confidence, 80) FROM trading_rules LIMIT 1`
 	var rules models.Economics
-	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount)
+	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount, &rules.MinConfidence)
 	if err == sql.ErrNoRows {
 		fmt.Println("GetTradingRules: No rules found in database, using defaults")
+		defaultConfidence := 80
 		return &models.Economics{
-			MinProfitSEK: intPtr(0),
-			MinDiscount:  intPtr(0),
+			MinProfitSEK:  intPtr(0),
+			MinDiscount:   intPtr(0),
+			MinConfidence: &defaultConfidence,
 		}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount)
+	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v, min_confidence=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount, rules.MinConfidence)
 	return &rules, nil
 }
 
@@ -1378,15 +1381,19 @@ func intPtr(i int) *int {
 func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics) error {
 	var minProfit interface{} = nil
 	var minDiscount interface{} = nil
+	var minConfidence interface{} = nil
 	if rules.MinProfitSEK != nil {
 		minProfit = *rules.MinProfitSEK
 	}
 	if rules.MinDiscount != nil {
 		minDiscount = *rules.MinDiscount
 	}
+	if rules.MinConfidence != nil {
+		minConfidence = *rules.MinConfidence
+	}
 
 	// Try update first
-	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2`, minProfit, minDiscount)
+	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2, min_confidence = $3`, minProfit, minDiscount, minConfidence)
 	if err != nil {
 		return err
 	}
@@ -1396,7 +1403,7 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 
 	// No rows updated -> insert a new row
 	var id int64
-	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount) VALUES ($1, $2) RETURNING id`, minProfit, minDiscount).Scan(&id)
+	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount, min_confidence) VALUES ($1, $2, $3) RETURNING id`, minProfit, minDiscount, minConfidence).Scan(&id)
 	if err != nil {
 		return err
 	}

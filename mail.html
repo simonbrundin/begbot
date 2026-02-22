@@ -128,16 +128,24 @@
 
       <div class="price-section">
         <div class="price-row">
+          <span class="label">Produkt</span>
+          <span class="value">{{.Product}}</span>
+        </div>
+        <div class="price-row">
           <span class="label">Inköpspris</span>
           <span class="value">{{.Price}}</span>
+        </div>
+        <div class="price-row">
+          <span class="label">Frakt</span>
+          <span class="value">{{.ShippingCost}}</span>
         </div>
         <div class="price-row">
           <span class="label">Värdering</span>
           <span class="value">{{.Valuation}}</span>
         </div>
         <div class="price-row">
-          <span class="label">Nypris</span>
-          <span class="value">{{.NewPrice}}</span>
+          <span class="label">Säkerhet</span>
+          <span class="value">{{.SecurityPercent}}</span>
         </div>
         <div class="price-row">
           <span class="label">Vinst</span>

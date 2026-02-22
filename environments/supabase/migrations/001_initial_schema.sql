@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS trading_rules (
     id SERIAL PRIMARY KEY,
     min_profit_sek INTEGER,
-    min_discount SMALLINT
+    min_discount SMALLINT,
+    min_confidence SMALLINT DEFAULT 80
 );
 
 CREATE TABLE IF NOT EXISTS traded_items (
