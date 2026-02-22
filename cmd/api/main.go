@@ -244,23 +244,44 @@ func (s *Server) inventoryItemHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getListings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	offset := (page - 1) * pageSize
+
 	potentialOnly := r.URL.Query().Get("potential") == "true" || r.URL.Query().Get("good-value") == "true"
-	logger.Printf("getListings: potentialOnly=%v", potentialOnly)
+	mineOnly := r.URL.Query().Get("mine") == "true"
+
+	logger.Printf("getListings: potentialOnly=%v, mineOnly=%v, page=%d, pageSize=%d", potentialOnly, mineOnly, page, pageSize)
 
 	var listings []db.ListingWithProfit
 	var err error
 
 	if potentialOnly {
-		listings, err = s.db.GetPotentialListings(ctx)
+		listings, err = s.db.GetPotentialListings(ctx, pageSize, offset)
 	} else {
-		listings, err = s.db.GetListingsWithProfit(ctx)
+		listings, err = s.db.GetListingsWithProfit(ctx, pageSize, offset)
 	}
 	if err != nil {
 		logger.Printf("GetListings error: %v", err)
 		api.WriteServerError(w, err.Error())
 		return
 	}
-	mineOnly := r.URL.Query().Get("mine") == "true"
+
 	if mineOnly {
 		filtered := make([]db.ListingWithProfit, 0, len(listings))
 		for _, l := range listings {
@@ -270,9 +291,36 @@ func (s *Server) getListings(w http.ResponseWriter, r *http.Request) {
 		}
 		listings = filtered
 	}
-	logger.Printf("Returning %d listings", len(listings))
+
+	totalCount, countErr := s.db.GetListingCount(ctx)
+	if countErr != nil {
+		logger.Printf("Warning: GetListingCount error: %v", countErr)
+		totalCount = len(listings)
+	}
+
+	totalPages := totalCount / pageSize
+	if totalCount%pageSize > 0 {
+		totalPages++
+	}
+
+	logger.Printf("Returning %d listings (page %d of %d, totalCount=%d)", len(listings), page, totalPages, totalCount)
+
+	type PaginatedResponse struct {
+		Data       []db.ListingWithProfit `json:"data"`
+		TotalCount int                    `json:"total_count"`
+		Page       int                    `json:"page"`
+		PageSize   int                    `json:"page_size"`
+		TotalPages int                    `json:"total_pages"`
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(listings)
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       listings,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) listingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -571,6 +619,24 @@ func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
 	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, date, amount, transaction_type FROM transactions ORDER BY date DESC`)
 	if err != nil {
 		api.WriteServerError(w, err.Error())
@@ -578,17 +644,48 @@ func (s *Server) getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var transactions []models.Transaction
+	var allTransactions []models.Transaction
 	for rows.Next() {
 		var t models.Transaction
 		if err := rows.Scan(&t.ID, &t.Date, &t.Amount, &t.TransactionType); err != nil {
 			api.WriteServerError(w, err.Error())
 			return
 		}
-		transactions = append(transactions, t)
+		allTransactions = append(allTransactions, t)
 	}
+
+	totalCount := len(allTransactions)
+	totalPages := totalCount / pageSize
+	if totalCount%pageSize > 0 {
+		totalPages++
+	}
+
+	startIdx := (page - 1) * pageSize
+	endIdx := startIdx + pageSize
+	if startIdx > len(allTransactions) {
+		startIdx = len(allTransactions)
+	}
+	if endIdx > len(allTransactions) {
+		endIdx = len(allTransactions)
+	}
+	transactions := allTransactions[startIdx:endIdx]
+
+	type PaginatedResponse struct {
+		Data       []models.Transaction `json:"data"`
+		TotalCount int                  `json:"total_count"`
+		Page       int                  `json:"page"`
+		PageSize   int                  `json:"page_size"`
+		TotalPages int                  `json:"total_pages"`
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(transactions)
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       transactions,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) transactionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1681,13 +1778,30 @@ func (s *Server) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getConversations(w http.ResponseWriter, r *http.Request) {
 	needsReview := r.URL.Query().Get("needs_review") == "true"
 
-	var conversations []models.ConversationWithDetails
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	var allConversations []models.ConversationWithDetails
 	var err error
 
 	if needsReview {
-		conversations, err = s.db.GetConversationsNeedingReview(r.Context())
+		allConversations, err = s.db.GetConversationsNeedingReview(r.Context())
 	} else {
-		conversations, err = s.db.GetAllConversations(r.Context())
+		allConversations, err = s.db.GetAllConversations(r.Context())
 	}
 
 	if err != nil {
@@ -1695,7 +1809,38 @@ func (s *Server) getConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(conversations)
+	totalCount := len(allConversations)
+	totalPages := totalCount / pageSize
+	if totalCount%pageSize > 0 {
+		totalPages++
+	}
+
+	startIdx := (page - 1) * pageSize
+	endIdx := startIdx + pageSize
+	if startIdx > len(allConversations) {
+		startIdx = len(allConversations)
+	}
+	if endIdx > len(allConversations) {
+		endIdx = len(allConversations)
+	}
+	conversations := allConversations[startIdx:endIdx]
+
+	type PaginatedResponse struct {
+		Data       []models.ConversationWithDetails `json:"data"`
+		TotalCount int                              `json:"total_count"`
+		Page       int                              `json:"page"`
+		PageSize   int                              `json:"page_size"`
+		TotalPages int                              `json:"total_pages"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       conversations,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {

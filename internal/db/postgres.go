@@ -885,15 +885,16 @@ func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, 
 	return exists, err
 }
 
-func (p *Postgres) GetAllListings(ctx context.Context) ([]models.Listing, error) {
+func (p *Postgres) GetAllListings(ctx context.Context, limit, offset int) ([]models.Listing, error) {
 	query := `
 		SELECT id, product_id, price, link, condition_id, shipping_cost, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings
 		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
 	`
-	rows, err := p.db.QueryContext(ctx, query)
+	rows, err := p.db.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1127,7 +1128,7 @@ type ListingWithValuations struct {
 }
 
 func (p *Postgres) GetListingsWithValuations(ctx context.Context) ([]ListingWithValuations, error) {
-	listings, err := p.GetAllListings(ctx)
+	listings, err := p.GetAllListings(ctx, 1000, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,8 +1309,8 @@ type ListingWithProfit struct {
 	ComputedValuation int
 }
 
-func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProfit, error) {
-	listings, err := p.GetAllListings(ctx)
+func (p *Postgres) GetListingsWithProfit(ctx context.Context, limit, offset int) ([]ListingWithProfit, error) {
+	listings, err := p.GetAllListings(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1360,8 +1361,8 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context) ([]ListingWithProf
 	return result, nil
 }
 
-func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfit, error) {
-	listings, err := p.GetAllListings(ctx)
+func (p *Postgres) GetPotentialListings(ctx context.Context, limit, offset int) ([]ListingWithProfit, error) {
+	listings, err := p.GetAllListings(ctx, limit*3, offset*3)
 	if err != nil {
 		return nil, err
 	}
@@ -1407,7 +1408,6 @@ func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfi
 				listingWithP.PotentialProfit = profit
 				listingWithP.DiscountPercent = discountPercent
 				listingWithP.ComputedValuation = computedVal
-				fmt.Printf("Listing %d passes: profit=%d, discount=%.1f%%\n", l.ID, profit, discountPercent)
 			} else {
 				continue
 			}
@@ -1430,6 +1430,11 @@ func (p *Postgres) GetPotentialListings(ctx context.Context) ([]ListingWithProfi
 		}
 		result = append(result, listingWithP)
 	}
+
+	if len(result) > limit {
+		result = result[:limit]
+	}
+
 	return result, nil
 }
 

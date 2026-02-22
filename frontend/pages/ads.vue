@@ -2,12 +2,25 @@
 import type { ListingWithDetails } from "~/types/database";
 import { createVimNavigation } from "~/composables/useVimNavigation";
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 const api = useApi();
 
 const listings = ref<ListingWithDetails[]>([]);
 const potentialListings = ref<ListingWithDetails[]>([]);
 const activeTab = ref<'all' | 'good-value'>('all');
 const error = ref<Error | null>(null);
+
+const page = ref(1);
+const pageSize = ref(20);
+const totalCount = ref(0);
+const totalPages = ref(0);
 
 const filteredListings = computed(() => {
   if (activeTab.value === 'good-value') {
@@ -22,15 +35,21 @@ const isVimNavigationFocused = ref(false);
 
 const fetchListings = async () => {
   try {
-    const data = await api.get<ListingWithDetails[]>("/listings");
-
-    if (!data || !Array.isArray(data)) {
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString()
+    });
+    const response = await api.get<PaginatedResponse<ListingWithDetails>>(`/listings?${params}`);
+    
+    if (!response || !response.data) {
       throw new Error("Invalid response from API");
     }
 
-    listings.value = data.filter(
+    listings.value = response.data.filter(
       (item) => item.Listing && !item.Listing.is_my_listing
     );
+    totalCount.value = response.total_count;
+    totalPages.value = response.total_pages;
     vimNav.setItemCount(filteredListings.value.length);
   } catch (e: any) {
     console.error("Failed to fetch listings:", e);
@@ -40,13 +59,17 @@ const fetchListings = async () => {
 
 const fetchPotentialListings = async () => {
   try {
-    const data = await api.get<ListingWithDetails[]>("/listings?good-value=true");
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString()
+    });
+    const response = await api.get<PaginatedResponse<ListingWithDetails>>(`/listings?good-value=true&${params}`);
 
-    if (!data || !Array.isArray(data)) {
+    if (!response || !response.data) {
       throw new Error("Invalid response from API");
     }
 
-    potentialListings.value = data.filter(
+    potentialListings.value = response.data.filter(
       (item) => item.Listing && !item.Listing.is_my_listing
     );
     vimNav.setItemCount(filteredListings.value.length);
@@ -54,6 +77,17 @@ const fetchPotentialListings = async () => {
     console.error("Failed to fetch potential listings:", e);
   }
 };
+
+const loadPage = async (newPage: number) => {
+  page.value = newPage;
+  await Promise.all([fetchListings(), fetchPotentialListings()]);
+};
+
+watch(activeTab, async () => {
+  page.value = 1;
+  vimNav.clearSelection();
+  await Promise.all([fetchListings(), fetchPotentialListings()]);
+});
 
 await Promise.all([fetchListings(), fetchPotentialListings()]);
 
@@ -339,6 +373,15 @@ const errorMessage = computed(() => {
       >
         {{ activeTab === 'good-value' ? 'Inga prisvärda annonser hittades.' : 'Inga annonser hittades.' }}
       </div>
+
+      <PaginationControls
+        v-if="totalPages > 1"
+        :page="page"
+        :page-size="pageSize"
+        :total-count="totalCount"
+        :total-pages="totalPages"
+        @update:page="loadPage"
+      />
     </template>
   </div>
 </template>
