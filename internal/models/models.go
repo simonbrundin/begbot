@@ -100,9 +100,10 @@ type ImageLink struct {
 }
 
 type Economics struct {
-	ID           int64 `json:"id" db:"id"`
-	MinProfitSEK *int  `json:"min_profit_sek,omitempty" db:"min_profit_sek"`
-	MinDiscount  *int  `json:"min_discount,omitempty" db:"min_discount"`
+	ID            int64 `json:"id" db:"id"`
+	MinProfitSEK  *int  `json:"min_profit_sek,omitempty" db:"min_profit_sek"`
+	MinDiscount   *int  `json:"min_discount,omitempty" db:"min_discount"`
+	MinConfidence *int  `json:"min_confidence,omitempty" db:"min_confidence"`
 }
 
 type TradedItemCandidate struct {

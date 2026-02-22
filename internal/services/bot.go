@@ -478,6 +478,12 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Pro
 }
 
 func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product) error {
+	// Skip if product is disabled
+	if product != nil && product.Enabled != nil && !*product.Enabled {
+		s.log(LogLevelInfo, "Skipping email: product %s is disabled", *product.Name)
+		return nil
+	}
+
 	var tradingRules *models.Economics
 	var err error
 
@@ -491,9 +497,11 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 	if tradingRules == nil {
 		defaultProfit := 0
 		defaultDiscount := 0
+		defaultConfidence := 80
 		tradingRules = &models.Economics{
-			MinProfitSEK: &defaultProfit,
-			MinDiscount:  &defaultDiscount,
+			MinProfitSEK:  &defaultProfit,
+			MinDiscount:   &defaultDiscount,
+			MinConfidence: &defaultConfidence,
 		}
 	}
 
@@ -507,12 +515,26 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		minDiscount = *tradingRules.MinDiscount
 	}
 
-	// Use computed product-level valuation; fall back to listing.Valuation when DB is unavailable
+	minConfidence := 80
+	if tradingRules.MinConfidence != nil {
+		minConfidence = *tradingRules.MinConfidence
+	}
+
+	// Use computed product-level valuation with confidence
 	computedValuation := listing.Valuation
+	valuationConfidence := 0.0
 	if listing.ProductID != nil && s.database != nil {
-		if cv, _, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
+		if cv, conf, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
 			computedValuation = cv
+			valuationConfidence = conf
 		}
+	}
+
+	// Check confidence threshold
+	if valuationConfidence < float64(minConfidence) {
+		s.log(LogLevelInfo, "Listing does not pass trading rules: confidence=%.2f%% (<%d%%)",
+			valuationConfidence, minConfidence)
+		return nil
 	}
 
 	profit := computedValuation - *listing.Price
@@ -547,6 +569,13 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		}
 		profitStr := fmt.Sprintf("%d kr", emailProfit)
 		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
+		securityPercentStr := fmt.Sprintf("%.0f%%", valuationConfidence)
+
+		// Shipping cost
+		shippingCostStr := "0 kr"
+		if listing.ShippingCost != nil {
+			shippingCostStr = fmt.Sprintf("%d kr", *listing.ShippingCost)
+		}
 
 		desc := ""
 		if listing.Description != nil {
@@ -555,7 +584,6 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 
 		brand := ""
 		name := ""
-		newPrice := ""
 		if product != nil {
 			if product.Brand != nil {
 				brand = *product.Brand
@@ -563,9 +591,14 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 			if product.Name != nil {
 				name = *product.Name
 			}
-			if product.NewPrice != nil {
-				newPrice = fmt.Sprintf("%d kr", *product.NewPrice)
-			}
+		}
+
+		// Full product name (brand + name)
+		productName := name
+		if brand != "" && name != "" {
+			productName = brand + " " + name
+		} else if brand != "" {
+			productName = brand
 		}
 
 		// Fetch image URLs from DB (can be multiple)
@@ -583,17 +616,17 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		}
 
 		mailData := map[string]interface{}{
-			"Title":       listing.Title,
-			"Price":       priceStr,
-			"Valuation":   fmt.Sprintf("%d kr", computedValuation),
-			"Profit":      profitStr,
-			"Discount":    discountStr,
-			"Description": desc,
-			"ImageURLs":   imageURLs,
-			"Link":        listing.Link,
-			"NewPrice":    newPrice,
-			"Brand":       brand,
-			"Name":        name,
+			"Title":           listing.Title,
+			"Price":           priceStr,
+			"Valuation":       fmt.Sprintf("%d kr", computedValuation),
+			"Profit":          profitStr,
+			"Discount":        discountStr,
+			"SecurityPercent": securityPercentStr,
+			"ShippingCost":    shippingCostStr,
+			"Product":         productName,
+			"Description":     desc,
+			"ImageURLs":       imageURLs,
+			"Link":            listing.Link,
 		}
 
 		err := SendMailHTMLWithData(emailCfg, s.cfg.Email.Recipients, subject, "mail.html", mailData)

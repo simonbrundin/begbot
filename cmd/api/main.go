@@ -600,6 +600,10 @@ func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "min_discount", Message: "must be non-negative"}})
 			return
 		}
+		if payload.MinConfidence != nil && (*payload.MinConfidence < 0 || *payload.MinConfidence > 100) {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_confidence", Message: "must be between 0 and 100"}})
+			return
+		}
 		if err := s.db.SaveTradingRules(r.Context(), &payload); err != nil {
 			api.WriteServerError(w, err.Error())
 			return

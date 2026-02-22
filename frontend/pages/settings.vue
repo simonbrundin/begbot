@@ -11,6 +11,10 @@
           <label class="label">Minsta rabatt (%)</label>
           <input type="number" v-model.number="rules.min_discount" class="input w-full" />
         </div>
+        <div>
+          <label class="label">Minsta säkerhetsprocent (%)</label>
+          <input type="number" v-model.number="rules.min_confidence" class="input w-full" />
+        </div>
         <div class="flex gap-2">
           <button type="submit" class="btn btn-primary">Spara</button>
           <button type="button" @click="fetchRules" class="btn btn-secondary">Ladda</button>
@@ -25,7 +29,7 @@
 import { ref, onMounted } from 'vue'
 const api = useApi()
 
-const rules = ref<{ min_profit_sek: number | null; min_discount: number | null }>({ min_profit_sek: null, min_discount: null })
+const rules = ref<{ min_profit_sek: number | null; min_discount: number | null; min_confidence: number | null }>({ min_profit_sek: null, min_discount: null, min_confidence: null })
 const message = ref<string | null>(null)
 
 const fetchRules = async () => {
@@ -33,6 +37,7 @@ const fetchRules = async () => {
     const data = await api.get<any>('/trading-rules')
     rules.value.min_profit_sek = data.min_profit_sek ?? null
     rules.value.min_discount = data.min_discount ?? null
+    rules.value.min_confidence = data.min_confidence ?? null
     message.value = null
   } catch (e: any) {
     message.value = 'Kunde inte hämta inställningar'
@@ -45,6 +50,7 @@ const save = async () => {
     await api.put('/trading-rules', {
       min_profit_sek: rules.value.min_profit_sek,
       min_discount: rules.value.min_discount,
+      min_confidence: rules.value.min_confidence,
     })
     message.value = 'Sparat'
   } catch (e: any) {
