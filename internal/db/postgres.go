@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strings"
 	"time"
 
 	"begbot/internal/config"
@@ -509,6 +510,28 @@ func (p *Postgres) SaveProduct(ctx context.Context, product *models.Product) err
 	return p.db.QueryRowContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled).Scan(&product.ID)
 }
 
+func (p *Postgres) CreateDisabledProduct(ctx context.Context, brand, name, category string) (*models.Product, error) {
+	enabled := false
+	product := &models.Product{
+		Brand:             &brand,
+		Name:              &name,
+		Category:          &category,
+		SellPackagingCost: 0,
+		SellPostageCost:   0,
+		Enabled:           &enabled,
+	}
+
+	log.Printf("[CreateDisabledProduct] Creating disabled product: brand=%s, name=%s, category=%s", brand, name, category)
+
+	if err := p.SaveProduct(ctx, product); err != nil {
+		log.Printf("[CreateDisabledProduct] Failed to create product: %v", err)
+		return nil, err
+	}
+
+	log.Printf("[CreateDisabledProduct] Created disabled product: ID=%d, Name=%s, Category=%s", product.ID, *product.Name, *product.Category)
+	return product, nil
+}
+
 func (p *Postgres) UpdateProduct(ctx context.Context, product *models.Product) error {
 	query := `
 		UPDATE products 
@@ -572,21 +595,85 @@ func (p *Postgres) GetProductByID(ctx context.Context, id int64) (*models.Produc
 }
 
 func (p *Postgres) FindProduct(ctx context.Context, brand, name, category string) (*models.Product, error) {
-	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
-		FROM products WHERE brand = $1 AND name = $2 AND category = $3
-	`
-	var product models.Product
-	err := p.db.QueryRowContext(ctx, query, brand, name, category).Scan(
-		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+	products, err := p.FindProducts(ctx, brand, name, category)
 	if err != nil {
 		return nil, err
 	}
-	return &product, nil
+	if len(products) == 0 {
+		return nil, nil
+	}
+	return products[0], nil
+}
+
+func (p *Postgres) FindProducts(ctx context.Context, brand, name, category string) ([]*models.Product, error) {
+	brandLower := strings.ToLower(brand)
+	nameLower := strings.ToLower(name)
+	categoryLower := strings.ToLower(category)
+
+	log.Printf("[FindProducts] Searching for: brand=%q, name=%q, category=%q", brandLower, nameLower, categoryLower)
+
+	query := `
+		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		FROM products WHERE LOWER(brand) = $1 AND LOWER(name) = $2 AND LOWER(category) = $3
+	`
+	rows, err := p.db.QueryContext(ctx, query, brandLower, nameLower, categoryLower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []*models.Product
+	for rows.Next() {
+		var product models.Product
+		if err := rows.Scan(
+			&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		products = append(products, &product)
+	}
+
+	if len(products) > 0 {
+		log.Printf("[FindProducts] Exact match found: %d products", len(products))
+		for i, p := range products {
+			log.Printf("[FindProducts]   [%d] ID=%d, Name=%s, Category=%s", i+1, p.ID, *p.Name, *p.Category)
+		}
+		return products, nil
+	}
+
+	log.Printf("[FindProducts] Exact match not found, trying fallback by brand+name...")
+
+	fallbackQuery := `
+		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		FROM products WHERE LOWER(brand) = $1 AND LOWER(name) = $2
+	`
+	rows, err = p.db.QueryContext(ctx, fallbackQuery, brandLower, nameLower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	products = nil
+	for rows.Next() {
+		var product models.Product
+		if err := rows.Scan(
+			&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		products = append(products, &product)
+	}
+
+	if len(products) > 0 {
+		log.Printf("[FindProducts] Fallback by brand+name found: %d products", len(products))
+		for i, p := range products {
+			log.Printf("[FindProducts]   [%d] ID=%d, Name=%s, Category=%s", i+1, p.ID, *p.Name, *p.Category)
+		}
+		return products, nil
+	}
+
+	log.Printf("[FindProducts] No products found for %s %s (%s)", brand, name, category)
+	return nil, nil
 }
 
 func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category string, modelVariant *string, packagingCost, postageCost int) (*models.Product, error) {

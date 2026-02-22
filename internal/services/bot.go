@@ -282,11 +282,14 @@ func (s *BotService) isNewLink(link string, newLinks []string) bool {
 func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	item := s.marketplaceService.ConvertToPotentialItem(ad)
 
-	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.AdText, ad.Link)
+	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
 		s.log(LogLevelError, "Failed to extract product info: %v", err)
 		return err
 	}
+
+	s.log(LogLevelInfo, "LLM extracted: Manufacturer=%q, Model=%q, Category=%q, Storage=%q",
+		productInfo.Manufacturer, productInfo.Model, productInfo.Category, productInfo.Storage)
 
 	item.BuyShippingCost = int(productInfo.ShippingCost)
 
@@ -297,6 +300,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	}
 
 	if validatedProduct == nil {
+		s.log(LogLevelWarning, "Listing validation failed - no matching product found for: %s", ad.Link)
 		return nil
 	}
 
@@ -409,7 +413,7 @@ func (s *BotService) evaluateItem(ctx context.Context, item *models.TradedItem, 
 }
 
 func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Product, error) {
-	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.AdText, ad.Link)
+	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
 		s.log(LogLevelError, "Failed to extract product info: %v", err)
 		return nil, err
@@ -420,21 +424,55 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Pro
 		return nil, nil
 	}
 
-	product, err := s.database.FindProduct(ctx, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
+	s.log(LogLevelInfo, "Looking up product: brand=%q, name=%q, category=%q",
+		productInfo.Manufacturer, productInfo.Model, productInfo.Category)
+
+	products, err := s.database.FindProducts(ctx, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
 	if err != nil {
-		s.log(LogLevelError, "Failed to find product: %v", err)
+		s.log(LogLevelError, "Failed to find products: %v", err)
 		return nil, err
 	}
 
-	if product == nil {
-		s.log(LogLevelInfo, "Product not in catalog: %s %s (%s) - skipping", productInfo.Manufacturer, productInfo.Model, productInfo.Category)
-		return nil, nil
+	if len(products) == 0 {
+		s.log(LogLevelWarning, "Product NOT found in catalog: %s %s (%s) - creating disabled product",
+			productInfo.Manufacturer, productInfo.Model, productInfo.Category)
+
+		product, createErr := s.database.CreateDisabledProduct(ctx, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
+		if createErr != nil {
+			s.log(LogLevelError, "Failed to create disabled product: %v", createErr)
+			return nil, createErr
+		}
+		s.log(LogLevelInfo, "Created disabled product: ID=%d, Name=%s, Category=%s",
+			product.ID, *product.Name, *product.Category)
+		return product, nil
 	}
 
-	if product.Enabled == nil || !*product.Enabled {
-		s.log(LogLevelWarning, "Product not enabled: %s %s (%s) - skipping", productInfo.Manufacturer, productInfo.Model, productInfo.Category)
-		return nil, nil
+	s.log(LogLevelInfo, "Found %d candidate product(s) in catalog:", len(products))
+	for i, p := range products {
+		enabled := "disabled"
+		if p.Enabled != nil && *p.Enabled {
+			enabled = "enabled"
+		}
+		s.log(LogLevelInfo, "  [%d] ID=%d, Name=%s, Category=%s, Status=%s",
+			i+1, p.ID, *p.Name, *p.Category, enabled)
 	}
+
+	var product *models.Product
+	for _, p := range products {
+		if p.Enabled != nil && *p.Enabled {
+			product = p
+			break
+		}
+	}
+
+	if product == nil {
+		s.log(LogLevelWarning, "All candidates are disabled - using first disabled product: %s %s",
+			productInfo.Manufacturer, productInfo.Model)
+		product = products[0]
+	}
+
+	s.log(LogLevelInfo, "Product selected: ID=%d, Name=%s, Category=%s",
+		product.ID, *product.Name, *product.Category)
 
 	return product, nil
 }
