@@ -117,6 +117,15 @@
       </table>
     </div>
 
+    <PaginationControls
+      v-if="totalPages > 1"
+      :page="page"
+      :page-size="pageSize"
+      :total-count="totalCount"
+      :total-pages="totalPages"
+      @update:page="loadPage"
+    />
+
     <!-- Logg-modal för insamlade värderingar -->
     <div v-if="collectLog" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
       <div class="bg-slate-800 rounded-lg p-6 w-full max-w-lg border border-slate-700">
@@ -228,6 +237,14 @@
 import type { Product, Valuation, ValuationType, ProductValuationTypeConfig } from '~/types/database'
 import ConfirmModal from '~/components/ConfirmModal.vue'
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 const api = useApi()
 
 const products = ref<Product[]>([])
@@ -243,6 +260,11 @@ const collectLog = ref<{ loading: boolean; results: { type: string; value: numbe
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
 const deletingProduct = ref<Product | null>(null)
+
+const page = ref(1)
+const pageSize = ref(20)
+const totalCount = ref(0)
+const totalPages = ref(0)
 
 // Per-product valuation type active states in edit form (typeId -> isActive)
 const editingValuationTypeActive = ref<Record<number, boolean>>({})
@@ -432,15 +454,19 @@ const getSortIcon = (column: string) => {
 const fetchData = async () => {
   loading.value = true
   try {
-    // Fetch products, valuations and valuation types. Use allSettled
-    // so the products list still appears even if auxiliary endpoints fail.
+    const params = new URLSearchParams({
+      page: page.value.toString(),
+      page_size: pageSize.value.toString()
+    })
     const [prodsRes, typesRes] = await Promise.allSettled([
-      api.get<Product[]>('/products'),
+      api.get<PaginatedResponse<Product>>(`/products?${params}`),
       api.get<ValuationType[]>('/valuation-types')
     ])
 
     if (prodsRes.status === 'fulfilled') {
-      products.value = prodsRes.value
+      products.value = prodsRes.value.data
+      totalCount.value = prodsRes.value.total_count
+      totalPages.value = prodsRes.value.total_pages
     } else {
       console.error('Failed to fetch products:', prodsRes.reason)
       products.value = []
@@ -482,6 +508,11 @@ const fetchData = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const loadPage = async (newPage: number) => {
+  page.value = newPage
+  await fetchData()
 }
 
 const formatDate = (dateStr?: string | null) => {
