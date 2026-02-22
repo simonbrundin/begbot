@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"begbot/internal/api"
 	"begbot/internal/auth"
@@ -129,10 +130,11 @@ func main() {
 	mux.HandleFunc("/api/fetch-ads/logs/", server.fetchAdsLogsHandler)
 	mux.HandleFunc("/api/fetch-ads/cancel/", server.fetchAdsCancelHandler)
 	mux.HandleFunc("/api/valuation-types", server.valuationTypesHandler)
-	mux.HandleFunc("/api/valuations", server.valuationsHandler)
-	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
+	mux.HandleFunc("/api/valuations/collect-outdated", server.collectOutdatedValuationsHandler)
 	mux.HandleFunc("/api/valuations/collect", server.collectValuationsHandler)
 	mux.HandleFunc("/api/valuations/compiled", server.compiledValuationsHandler)
+	mux.HandleFunc("/api/valuations", server.valuationsHandler)
+	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
 	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
 	mux.HandleFunc("/api/conversations", server.conversationsHandler)
 	mux.HandleFunc("/api/conversations/", server.conversationItemHandler)
@@ -1548,6 +1550,119 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 		"product_id": req.ProductID,
 		"collected":  len(inputs),
 		"results":    results,
+	})
+}
+
+func (s *Server) collectOutdatedValuationsHandler(w http.ResponseWriter, r *http.Request) {
+	logger.Printf("DEBUG: collectOutdatedValuationsHandler called, path=%s", r.URL.Path)
+	if r.Method != "POST" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	ctx := r.Context()
+
+	daysStr := r.URL.Query().Get("days")
+	days := 30
+	if daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 {
+			days = d
+		}
+	}
+
+	query := `
+		SELECT p.id, p.brand, p.name, p.category, p.model_variant, p.new_price,
+			COALESCE(MAX(v.created_at), '1970-01-01'::timestamp) as last_valuation
+		FROM products p
+		LEFT JOIN valuations v ON v.product_id = p.id
+		WHERE p.enabled = true OR p.enabled IS NULL
+		GROUP BY p.id, p.brand, p.name, p.category, p.model_variant, p.new_price, p.enabled
+		HAVING COALESCE(MAX(v.created_at), '1970-01-01'::timestamp) < NOW() - (INTERVAL '1 day' * $1)
+			OR MAX(v.created_at) IS NULL
+		ORDER BY last_valuation ASC
+	`
+	rows, err := s.db.DB().QueryContext(ctx, query, days)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type productRow struct {
+		id           int64
+		brand        sql.NullString
+		name         sql.NullString
+		category     sql.NullString
+		modelVariant sql.NullString
+		newPrice     sql.NullInt64
+	}
+
+	var products []productRow
+	for rows.Next() {
+		var p productRow
+		if err := rows.Scan(&p.id, &p.brand, &p.name, &p.category, &p.modelVariant, &p.newPrice); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		products = append(products, p)
+	}
+
+	if len(products) == 0 {
+		api.WriteSuccess(w, map[string]interface{}{
+			"results": []interface{}{},
+			"total":   0,
+		})
+		return
+	}
+
+	type resultItem struct {
+		ProductID int64  `json:"product_id"`
+		Collected int    `json:"collected,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+
+	var results []resultItem
+
+	for _, p := range products {
+		productInfo := services.ProductInfo{}
+		if p.brand.Valid {
+			productInfo.Manufacturer = p.brand.String
+		}
+		if p.name.Valid {
+			productInfo.Model = p.name.String
+		}
+		if p.category.Valid {
+			productInfo.Category = p.category.String
+		}
+		if p.modelVariant.Valid {
+			productInfo.Storage = p.modelVariant.String
+		}
+		if p.newPrice.Valid {
+			productInfo.NewPrice = float64(p.newPrice.Int64)
+		}
+
+		inputs, _ := s.valuationService.CollectAllWithErrors(ctx, productInfo)
+
+		if len(inputs) > 0 {
+			if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", p.id), inputs); err != nil {
+				logger.Printf("Warning: failed to save valuations for product %d: %v", p.id, err)
+				results = append(results, resultItem{ProductID: p.id, Error: err.Error()})
+			} else {
+				results = append(results, resultItem{ProductID: p.id, Collected: len(inputs)})
+			}
+		} else {
+			logger.Printf("collectOutdatedValuations: no inputs collected for product %d", p.id)
+			results = append(results, resultItem{ProductID: p.id, Error: "inga värden hittades"})
+		}
+
+		if p.id != products[len(products)-1].id {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	api.WriteSuccess(w, map[string]interface{}{
+		"results": results,
+		"total":   len(results),
 	})
 }
 

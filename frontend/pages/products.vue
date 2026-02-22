@@ -2,9 +2,14 @@
   <div>
     <div class="flex justify-between items-center mb-6">
       <h1 class="page-header">Produkter</h1>
-      <button @click="showAddModal = true" class="btn btn-primary">
-        Lägg till produkt
-      </button>
+      <div class="flex gap-2">
+        <button @click="collectOutdatedValuations" :disabled="collectingOutdated" class="btn btn-secondary">
+          {{ collectingOutdated ? 'Uppdaterar...' : 'Uppdatera alla' }}
+        </button>
+        <button @click="showAddModal = true" class="btn btn-primary">
+          Lägg till produkt
+        </button>
+      </div>
     </div>
 
     <!-- Save status toast -->
@@ -233,6 +238,7 @@ const valuationConfigsByProduct = ref<Record<number, ProductValuationTypeConfig[
 const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.enabled !== false))
 const loading = ref(false)
 const collectingProducts = ref<Set<number>>(new Set())
+const collectingOutdated = ref(false)
 const collectLog = ref<{ loading: boolean; results: { type: string; value: number; source_url?: string; error?: string; count?: number }[] } | null>(null)
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
@@ -715,6 +721,33 @@ const collectValuations = async (productId: number) => {
     const next = new Set(collectingProducts.value)
     next.delete(productId)
     collectingProducts.value = next
+  }
+}
+
+const collectOutdatedValuations = async () => {
+  collectingOutdated.value = true
+  collectLog.value = { loading: true, results: [] }
+  try {
+    const res = await api.post<{ results: { product_id: number; collected: number; error?: string }[]; total: number }>(
+      '/valuations/collect-outdated?days=30',
+      {}
+    )
+    collectLog.value = { 
+      loading: false, 
+      results: res.results?.map(r => ({
+        type: `Produkt ${r.product_id}`,
+        value: r.collected,
+        error: r.error
+      })) ?? [] 
+    }
+    await fetchData()
+    showSaveStatus('success', `Uppdaterade ${res.total} produkter`)
+  } catch (e) {
+    console.error('Failed to collect outdated valuations:', e)
+    collectLog.value = null
+    showSaveStatus('error', 'Kunde inte uppdatera värderingar')
+  } finally {
+    collectingOutdated.value = false
   }
 }
 
