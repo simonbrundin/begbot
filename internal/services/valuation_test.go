@@ -197,35 +197,37 @@ func TestHistoricalValuation_CalculatePriceForDays_NoData(t *testing.T) {
 func TestCalculateProfit(t *testing.T) {
 	buyPrice := 500.0
 	shippingCost := 50.0
+	insuranceCost := 25.0
 	estimatedSellPrice := 1000.0
 
-	profit := calculateProfit(buyPrice, shippingCost, estimatedSellPrice)
-	expectedProfit := 450.0 // 1000 - 500 - 50
+	profit := calculateProfit(buyPrice, shippingCost, insuranceCost, estimatedSellPrice)
+	expectedProfit := 425.0 // 1000 - 500 - 50 - 25
 
 	if profit != expectedProfit {
 		t.Errorf("Expected profit %f, got %f", expectedProfit, profit)
 	}
 }
 
-func calculateProfit(buyPrice, shippingCost, estimatedSellPrice float64) float64 {
-	return estimatedSellPrice - buyPrice - shippingCost
+func calculateProfit(buyPrice, shippingCost, insuranceCost, estimatedSellPrice float64) float64 {
+	return estimatedSellPrice - buyPrice - shippingCost - insuranceCost
 }
 
 func TestCalculateProfitMargin(t *testing.T) {
 	buyPrice := 500.0
 	shippingCost := 50.0
-	profit := 450.0
+	insuranceCost := 25.0
+	profit := 425.0
 
-	margin := calculateProfitMargin(profit, buyPrice, shippingCost)
-	expectedMargin := 0.8181818181818182 // 450 / 550
+	margin := calculateProfitMargin(profit, buyPrice, shippingCost, insuranceCost)
+	expectedMargin := 0.7391304347826086 // 425 / (500 + 50 + 25)
 
 	if math.Abs(margin-expectedMargin) > 0.0001 {
 		t.Errorf("Expected margin %f, got %f", expectedMargin, margin)
 	}
 }
 
-func calculateProfitMargin(profit, buyPrice, shippingCost float64) float64 {
-	totalCost := buyPrice + shippingCost
+func calculateProfitMargin(profit, buyPrice, shippingCost, insuranceCost float64) float64 {
+	totalCost := buyPrice + shippingCost + insuranceCost
 	if totalCost == 0 {
 		return 0
 	}
@@ -233,7 +235,7 @@ func calculateProfitMargin(profit, buyPrice, shippingCost float64) float64 {
 }
 
 func TestCalculateProfitMargin_ZeroCost(t *testing.T) {
-	margin := calculateProfitMargin(100.0, 0.0, 0.0)
+	margin := calculateProfitMargin(100.0, 0.0, 0.0, 0.0)
 
 	if margin != 0 {
 		t.Errorf("Expected margin 0 for zero cost, got %f", margin)
