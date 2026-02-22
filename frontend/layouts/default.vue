@@ -5,7 +5,7 @@
       class="fixed left-0 top-0 h-full w-64 bg-slate-800 border-r border-slate-700 p-4 z-10"
     >
       <div class="mb-8">
-        <h1 class="text-xl font-bold text-emerald-400">Begbot</h1>
+        <img src="/begbot.png" alt="Begbot" class="h-16 w-auto" />
       </div>
       <nav class="space-y-1">
         <NuxtLink
