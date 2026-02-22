@@ -149,6 +149,13 @@ func runSearchTerms(ctx context.Context, svc *services.SearchTermService, postgr
 				fmt.Fprintf(os.Stderr, "Failed to save listing: %v\n", err)
 				continue
 			}
+
+			if len(ad.ImageURLs) > 0 {
+				if err := postgres.SaveImageLinks(ctx, listing.ID, ad.ImageURLs); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to save image links: %v\n", err)
+				}
+			}
+
 			saved++
 		}
 

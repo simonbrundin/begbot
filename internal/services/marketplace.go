@@ -217,11 +217,21 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 		priceText := strings.TrimSpace(priceSel.Text())
 		price := parsePrice(priceText)
 
+		// Try to extract image from the card
+		var imageURLs []string
+		imgSel := sel.Find("img")
+		if imgSel.Length() > 0 {
+			if src, ok := imgSel.First().Attr("src"); ok && src != "" {
+				imageURLs = []string{src}
+			}
+		}
+
 		ad := RawAd{
 			Link:        link,
 			Title:       title,
 			Price:       price,
 			Marketplace: "tradera",
+			ImageURLs:   imageURLs,
 		}
 
 		ads = append(ads, ad)
@@ -387,6 +397,12 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 			shippingCostPtr = cost
 		}
 
+		// Extract image URLs from JSON-LD
+		var imageURLs []string
+		if item.Item.Image != "" {
+			imageURLs = []string{item.Item.Image}
+		}
+
 		ad := RawAd{
 			Link:         item.Item.URL,
 			Title:        item.Item.Name,
@@ -394,6 +410,7 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 			AdText:       "",
 			Marketplace:  "blocket",
 			ShippingCost: shippingCostPtr,
+			ImageURLs:    imageURLs,
 		}
 
 		if ad.Title != "" && ad.Price > 0 {

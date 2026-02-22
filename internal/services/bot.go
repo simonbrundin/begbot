@@ -365,6 +365,13 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		s.log(LogLevelError, "Failed to save listing: %v", err)
 		return err
 	}
+
+	if len(ad.ImageURLs) > 0 {
+		if err := s.database.SaveImageLinks(ctx, listing.ID, ad.ImageURLs); err != nil {
+			s.log(LogLevelWarning, "Failed to save image links: %v", err)
+		}
+	}
+
 	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", *validatedProduct.Name, item.BuyPrice, compiledValuation)
 
 	// Save individual valuations to the database
