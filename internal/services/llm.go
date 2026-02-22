@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"begbot/internal/config"
 )
@@ -48,7 +49,7 @@ type ProductInfo struct {
 	NewPrice     float64
 }
 
-func (s *LLMService) ExtractProductInfo(ctx context.Context, adText, link string) (*ProductInfo, error) {
+func (s *LLMService) ExtractProductInfo(ctx context.Context, title, adText, link string) (*ProductInfo, error) {
 	prompt := fmt.Sprintf(`Analyze this marketplace ad and extract product information. Return ONLY a JSON object with these exact fields:
 {
   "manufacturer": "brand name",
@@ -59,9 +60,14 @@ func (s *LLMService) ExtractProductInfo(ctx context.Context, adText, link string
   "shipping_cost": 0
 }
 
+Ad title: %s
 Ad text: %s
 
-JSON output:`, adText)
+JSON output:`, title, adText)
+
+	log.Printf("[LLM] Processing ad: %s", link)
+	log.Printf("[LLM] Ad title: %s", title)
+	log.Printf("[LLM] Ad text preview: %.200s...", adText)
 
 	model := s.client.GetModel("ExtractProductInfo", s.defaultModel, s.models)
 
@@ -75,7 +81,12 @@ JSON output:`, adText)
 	var info ProductInfo
 	if err := json.Unmarshal([]byte(content), &info); err != nil {
 		info = ProductInfo{}
+		log.Printf("[LLM] Failed to parse LLM response as JSON: %v", err)
+		log.Printf("[LLM] Raw response: %s", content)
 	}
+
+	log.Printf("[LLM] Extracted - Manufacturer: %q, Model: %q, Category: %q, Storage: %q, Condition: %q",
+		info.Manufacturer, info.Model, info.Category, info.Storage, info.Condition)
 
 	info.AdText = adText
 	return &info, nil
