@@ -219,7 +219,8 @@ func (p *Postgres) Migrate() error {
 				(1, 'Egen databas'),
 				(2, 'Tradera'),
 				(3, 'eBay'),
-				(4, 'Nypris (LLM)')
+				(4, 'Nypris (LLM)'),
+				(5, 'Blocket')
 			ON CONFLICT (id) DO NOTHING`,
 		`CREATE TABLE IF NOT EXISTS scraping_runs (
 			id SERIAL PRIMARY KEY,

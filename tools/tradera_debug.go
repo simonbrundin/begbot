@@ -10,9 +10,11 @@ import (
 
 func main() {
 	cfg := &config.Config{}
-	cfg.Scraping.Tradera.Enabled = true
 	cfg.Scraping.Tradera.Timeout = 20 * time.Second
 	// leave BaseURL empty to use production Tradera
+
+	services.SetValuationTypeEnabled("Tradera", true)
+	defer services.SetValuationTypeEnabled("Tradera", false)
 
 	pi := services.ProductInfo{Manufacturer: "Apple", Model: "iPad mini"}
 	fmt.Println("Running Tradera valuation for:", pi)

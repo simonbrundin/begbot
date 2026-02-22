@@ -1482,12 +1482,64 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
+		// If Blocket returned a breakdown with multiple query results, expand those into separate result items
+		if r.Input != nil && r.Input.Type == "Blocket" && r.Input.Metadata != nil {
+			if bdRaw, ok := r.Input.Metadata["breakdown"].(map[string]interface{}); ok {
+				orderedKeys := make([]string, 0, len(bdRaw))
+				for k := range bdRaw {
+					orderedKeys = append(orderedKeys, k)
+				}
+				sort.Strings(orderedKeys)
+
+				var totalCount int
+				for _, q := range orderedKeys {
+					entry := resultItem{Type: fmt.Sprintf("Blocket (%s)", q)}
+					if entryRaw, ok := bdRaw[q]; ok {
+						if eMap, ok := entryRaw.(map[string]interface{}); ok {
+							if valf, ok := eMap["price"].(float64); ok {
+								entry.Value = int(valf)
+							} else if vali, ok := eMap["price"].(int); ok {
+								entry.Value = vali
+							}
+							if cf, ok := eMap["count"].(float64); ok {
+								entry.Count = int(cf)
+								totalCount += entry.Count
+							} else if ci, ok := eMap["count"].(int); ok {
+								entry.Count = ci
+								totalCount += ci
+							}
+							if src, ok := eMap["source_url"].(string); ok {
+								entry.SourceURL = src
+							}
+						}
+					}
+					if entry.Value == 0 {
+						entry.Error = "inga priser hittades"
+					}
+					results = append(results, entry)
+				}
+
+				// Add combined Blocket result as a summary entry with total count
+				summary := resultItem{Type: "Blocket (sammanvägd)", Value: r.Input.Value, Count: totalCount}
+				results = append(results, summary)
+				continue
+			}
+		}
+
 		item := resultItem{Type: r.Input.Type}
 		if r.Error != "" {
 			item.Error = r.Error
 		} else {
 			item.Value = r.Input.Value
 			item.SourceURL = r.Input.SourceURL
+			// Extract ad count from metadata (e.g., Blocket uses filtered_count/total_count)
+			if r.Input.Metadata != nil {
+				if fc, ok := r.Input.Metadata["filtered_count"].(float64); ok {
+					item.Count = int(fc)
+				} else if tc, ok := r.Input.Metadata["total_count"].(float64); ok {
+					item.Count = int(tc)
+				}
+			}
 		}
 		results = append(results, item)
 	}

@@ -123,21 +123,17 @@ func parseBlocketAdPage(body []byte, adURL string) (*RawAd, error) {
 func (s *MarketplaceService) FetchAds(ctx context.Context, query string) ([]RawAd, error) {
 	var ads []RawAd
 
-	if s.cfg.Scraping.Tradera.Enabled {
-		traderaAds, err := s.fetchTraderaAds(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		ads = append(ads, traderaAds...)
+	traderaAds, err := s.fetchTraderaAds(ctx, query)
+	if err != nil {
+		return nil, err
 	}
+	ads = append(ads, traderaAds...)
 
-	if s.cfg.Scraping.Blocket.Enabled {
-		blocketAds, err := s.fetchBlocketAds(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		ads = append(ads, blocketAds...)
+	blocketAds, err := s.fetchBlocketAds(ctx, query)
+	if err != nil {
+		return nil, err
 	}
+	ads = append(ads, blocketAds...)
 
 	return ads, nil
 }
