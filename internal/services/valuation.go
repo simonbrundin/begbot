@@ -27,6 +27,7 @@ const (
 	ValuationTypeTradera     = "Tradera"
 	ValuationTypeMarketplace = "eBay/Marknadsplatser"
 	ValuationTypeLLMNewPrice = "Nypris (LLM)"
+	ValuationTypeBlocket     = "Blocket"
 )
 
 type ValuationMethod interface {
@@ -93,13 +94,48 @@ func NewValuationService(cfg *config.Config, database *db.Postgres, llmSvc *LLMS
 		models:       models,
 	}
 
+	svc.loadValuationTypesFromDB()
+
 	svc.compiler = NewValuationCompiler(cfg, llmSvc)
 	svc.RegisterMethod(&DatabaseValuationMethod{svc: svc})
 	svc.RegisterMethod(&LLMNewPriceMethod{svc: svc})
 	svc.RegisterMethod(&TraderaValuationMethod{svc: svc})
+	svc.RegisterMethod(&BlocketValuationMethod{svc: svc})
 	svc.RegisterMethod(&SoldAdsValuationMethod{svc: svc})
 
 	return svc
+}
+
+var valuationTypeEnabled = make(map[string]bool)
+var valuationTypeCacheTime time.Time
+var valuationTypeCacheTTL = 5 * time.Minute
+
+func (s *ValuationService) loadValuationTypesFromDB() {
+	if s.database == nil {
+		return
+	}
+	ctx := context.Background()
+	types, err := s.database.GetValuationTypes(ctx)
+	if err != nil {
+		log.Printf("Failed to load valuation types: %v", err)
+		return
+	}
+	for _, t := range types {
+		valuationTypeEnabled[t.Name] = t.Enabled
+	}
+	valuationTypeCacheTime = time.Now()
+	log.Printf("Loaded valuation types from database: %v", valuationTypeEnabled)
+}
+
+func (s *ValuationService) IsValuationTypeEnabled(typeName string) bool {
+	if time.Since(valuationTypeCacheTime) > valuationTypeCacheTTL {
+		s.loadValuationTypesFromDB()
+	}
+	return valuationTypeEnabled[typeName]
+}
+
+func SetValuationTypeEnabled(typeName string, enabled bool) {
+	valuationTypeEnabled[typeName] = enabled
 }
 
 func (s *ValuationService) RegisterMethod(m ValuationMethod) {
@@ -199,6 +235,8 @@ func (s *ValuationService) getValuationTypeID(typeName string) int16 {
 		return 3
 	case ValuationTypeLLMNewPrice:
 		return 4
+	case ValuationTypeBlocket:
+		return 5
 	default:
 		return 0
 	}
@@ -476,11 +514,11 @@ func (m *TraderaValuationMethod) Priority() int {
 }
 
 func (m *TraderaValuationMethod) Valuate(ctx context.Context, productInfo ProductInfo) (*ValuationInput, error) {
-	if m.svc == nil || m.svc.cfg == nil {
+	if m.svc == nil {
 		return nil, nil
 	}
 
-	if !m.svc.cfg.Scraping.Tradera.Enabled {
+	if !m.svc.IsValuationTypeEnabled("Tradera") {
 		return nil, nil
 	}
 
@@ -491,13 +529,15 @@ func (m *TraderaValuationMethod) Valuate(ctx context.Context, productInfo Produc
 	// and return a single ValuationInput where Value is the integer average of the two.
 
 	basePageURL := "https://www.tradera.com/valuation"
-	if m.svc.cfg.Scraping.Tradera.BaseURL != "" {
-		basePageURL = m.svc.cfg.Scraping.Tradera.BaseURL
-	}
+	timeout := 30 * time.Second
 
-	timeout := m.svc.cfg.Scraping.Tradera.Timeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
+	if m.svc.cfg != nil {
+		if m.svc.cfg.Scraping.Tradera.BaseURL != "" {
+			basePageURL = m.svc.cfg.Scraping.Tradera.BaseURL
+		}
+		if m.svc.cfg.Scraping.Tradera.Timeout > 0 {
+			timeout = m.svc.cfg.Scraping.Tradera.Timeout
+		}
 	}
 	client := &http.Client{Timeout: timeout}
 
@@ -926,6 +966,386 @@ func (m *SoldAdsValuationMethod) Valuate(ctx context.Context, productInfo Produc
 		},
 		CollectedAt: time.Now(),
 	}, nil
+}
+
+type BlocketValuationMethod struct {
+	svc *ValuationService
+}
+
+func (m *BlocketValuationMethod) Name() string {
+	return ValuationTypeBlocket
+}
+
+func (m *BlocketValuationMethod) Priority() int {
+	return 2
+}
+
+type blocketCacheEntry struct {
+	Val       ValuationInput
+	Collected time.Time
+}
+
+var blocketCache struct {
+	mu sync.RWMutex
+	m  map[string]blocketCacheEntry
+}
+
+func init() {
+	blocketCache.m = make(map[string]blocketCacheEntry)
+}
+
+type blocketSearchResponse struct {
+	Docs []blocketAd `json:"docs"`
+}
+
+type blocketAd struct {
+	ID      string       `json:"id"`
+	Price   blocketPrice `json:"price"`
+	Heading string       `json:"heading"`
+}
+
+type blocketPrice struct {
+	Amount int `json:"amount"`
+}
+
+func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo ProductInfo) (*ValuationInput, error) {
+	if m.svc == nil {
+		return nil, nil
+	}
+
+	if !m.svc.IsValuationTypeEnabled("Blocket") {
+		return nil, nil
+	}
+
+	baseURL := "https://blocket-api.se"
+	timeout := 30 * time.Second
+
+	if m.svc.cfg != nil {
+		if m.svc.cfg.Scraping.Blocket.BaseURL != "" {
+			baseURL = m.svc.cfg.Scraping.Blocket.BaseURL
+		}
+		if m.svc.cfg.Scraping.Blocket.Timeout > 0 {
+			timeout = m.svc.cfg.Scraping.Blocket.Timeout
+		}
+	}
+	client := &http.Client{Timeout: timeout}
+
+	queries := []string{}
+	if productInfo.Manufacturer != "" && productInfo.Model != "" {
+		queries = append(queries, productInfo.Manufacturer+" "+productInfo.Model)
+		queries = append(queries, productInfo.Model)
+	} else if productInfo.Model != "" {
+		queries = append(queries, productInfo.Model)
+	} else if productInfo.AdText != "" {
+		queries = append(queries, productInfo.AdText)
+	}
+
+	if len(queries) == 0 {
+		return nil, nil
+	}
+
+	prices := make(map[string]int)
+	counts := make(map[string]int)
+	confidences := make(map[string]float64)
+
+	cacheTTL := 5 * time.Minute
+
+	for _, q := range queries {
+		cacheKey := "blocket-valuation:" + q
+		blocketCache.mu.RLock()
+		if e, ok := blocketCache.m[cacheKey]; ok {
+			if time.Since(e.Collected) < cacheTTL {
+				cached := e.Val
+				prices[q] = cached.Value
+				if cached.Metadata != nil {
+					if v, ok := cached.Metadata["count"]; ok {
+						switch t := v.(type) {
+						case int:
+							counts[q] = t
+						case float64:
+							counts[q] = int(t)
+						default:
+							counts[q] = 1
+						}
+					} else {
+						counts[q] = 1
+					}
+					confidences[q] = cached.Confidence
+				} else {
+					counts[q] = 1
+					confidences[q] = cached.Confidence
+				}
+				blocketCache.mu.RUnlock()
+				continue
+			}
+		}
+		blocketCache.mu.RUnlock()
+
+		result, err := blocketSearch(ctx, client, baseURL, q)
+		if err != nil {
+			log.Printf("Blocket valuation for query %q failed: %v", q, err)
+			continue
+		}
+
+		log.Printf("Blocket: got %d docs for query %q", len(result.Docs), q)
+
+		if len(result.Docs) == 0 {
+			log.Printf("Blocket: inga annonser hittades för sökning: %s", q)
+			continue
+		}
+
+		allPrices := make([]int, 0, len(result.Docs))
+		for _, ad := range result.Docs {
+			if ad.Price.Amount > 0 {
+				allPrices = append(allPrices, ad.Price.Amount)
+			}
+		}
+
+		if len(allPrices) == 0 {
+			continue
+		}
+
+		filteredPrices := filterOutliersIQR(allPrices)
+		if len(filteredPrices) == 0 {
+			continue
+		}
+
+		medianPrice := calculatePercentile(filteredPrices, 0.25)
+		confidence := 0.5
+		if len(filteredPrices) >= 10 {
+			confidence = 0.7
+		}
+		if len(filteredPrices) >= 50 {
+			confidence = 0.85
+		}
+
+		searchURL := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", url.QueryEscape(q))
+
+		vi := ValuationInput{
+			Type:       m.Name(),
+			Value:      medianPrice,
+			Confidence: confidence,
+			SourceURL:  searchURL,
+			Metadata: map[string]interface{}{
+				"query":           q,
+				"total_count":     len(result.Docs),
+				"filtered_count":  len(filteredPrices),
+				"all_prices":      allPrices,
+				"filtered_prices": filteredPrices,
+				"lower_bound":     calculateLowerBound(allPrices),
+				"upper_bound":     calculateUpperBound(allPrices),
+			},
+			CollectedAt: time.Now(),
+		}
+
+		cacheKey = "blocket-valuation:" + q
+		blocketCache.mu.Lock()
+		blocketCache.m[cacheKey] = blocketCacheEntry{Val: vi, Collected: time.Now()}
+		blocketCache.mu.Unlock()
+
+		prices[q] = medianPrice
+		counts[q] = len(filteredPrices)
+		confidences[q] = confidence
+	}
+
+	if len(prices) == 0 {
+		return nil, fmt.Errorf("inga priser hittades på Blocket för de givna sökningarna")
+	}
+
+	var sum int
+	var totalCount int
+	var weightedSum int
+	for q, p := range prices {
+		sum += p
+		c := counts[q]
+		totalCount += c
+		weightedSum += p * c
+	}
+
+	var avg int
+	if totalCount > 0 {
+		avg = int(math.Round(float64(weightedSum) / float64(totalCount)))
+	} else {
+		avg = sum / len(prices)
+	}
+
+	var combinedConfidence float64
+	if totalCount > 0 {
+		var confSum float64
+		for q, c := range confidences {
+			confSum += c * float64(counts[q])
+		}
+		combinedConfidence = confSum / float64(totalCount)
+	} else {
+		var confSum float64
+		for _, c := range confidences {
+			confSum += c
+		}
+		if len(confidences) > 0 {
+			combinedConfidence = confSum / float64(len(confidences))
+		} else {
+			combinedConfidence = 0.6
+		}
+	}
+
+	metadata := map[string]interface{}{"queries": []string{}}
+	qList := make([]string, 0, len(queries))
+	for _, q := range queries {
+		qList = append(qList, q)
+	}
+	metadata["queries"] = qList
+	breakdown := make(map[string]interface{})
+	for q, p := range prices {
+		srcURL := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", url.QueryEscape(q))
+		breakdown[q] = map[string]interface{}{
+			"price":      p,
+			"count":      counts[q],
+			"source_url": srcURL,
+		}
+	}
+	metadata["breakdown"] = breakdown
+
+	vi := ValuationInput{
+		Type:        m.Name(),
+		Value:       avg,
+		Confidence:  combinedConfidence,
+		SourceURL:   "",
+		Metadata:    metadata,
+		CollectedAt: time.Now(),
+	}
+
+	return &vi, nil
+}
+
+func blocketSearch(ctx context.Context, client *http.Client, baseURL string, query string) (*blocketSearchResponse, error) {
+	url := fmt.Sprintf("%s/v1/search?query=%s", baseURL, url.QueryEscape(query))
+	log.Printf("Blocket API URL: %s", url)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("blocket API returned status %d", resp.StatusCode)
+	}
+
+	var result blocketSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
+}
+
+func calculateQuartiles(prices []int) (float64, float64, float64) {
+	sorted := make([]int, len(prices))
+	copy(sorted, prices)
+	sort.Ints(sorted)
+
+	n := len(sorted)
+	if n == 0 {
+		return 0, 0, 0
+	}
+
+	q1Index := n / 4
+	q3Index := 3 * n / 4
+
+	var q1, q3 float64
+	if q1Index > 0 && q1Index < n {
+		q1 = float64(sorted[q1Index-1])
+	} else if q1Index < n {
+		q1 = float64(sorted[q1Index])
+	}
+
+	if q3Index > 0 && q3Index < n {
+		q3 = float64(sorted[q3Index-1])
+	} else if q3Index < n {
+		q3 = float64(sorted[q3Index])
+	}
+
+	iqr := q3 - q1
+	return q1, q3, iqr
+}
+
+func calculateLowerBound(prices []int) int {
+	_, _, iqr := calculateQuartiles(prices)
+	q1, _, _ := calculateQuartiles(prices)
+	lower := q1 - 1.5*iqr
+	if lower < 0 {
+		lower = 0
+	}
+	return int(lower)
+}
+
+func calculateUpperBound(prices []int) int {
+	_, _, iqr := calculateQuartiles(prices)
+	_, q3, _ := calculateQuartiles(prices)
+	upper := q3 + 1.5*iqr
+	return int(upper)
+}
+
+func filterOutliersIQR(prices []int) []int {
+	if len(prices) == 0 {
+		return nil
+	}
+
+	lower := calculateLowerBound(prices)
+	upper := calculateUpperBound(prices)
+
+	var filtered []int
+	for _, p := range prices {
+		if p >= lower && p <= upper {
+			filtered = append(filtered, p)
+		}
+	}
+
+	return filtered
+}
+
+func calculateMedian(prices []int) int {
+	if len(prices) == 0 {
+		return 0
+	}
+
+	sorted := make([]int, len(prices))
+	copy(sorted, prices)
+	sort.Ints(sorted)
+
+	n := len(sorted)
+	if n%2 == 0 {
+		return (sorted[n/2-1] + sorted[n/2]) / 2
+	}
+	return sorted[n/2]
+}
+
+func calculatePercentile(prices []int, percentile float64) int {
+	if len(prices) == 0 {
+		return 0
+	}
+
+	sorted := make([]int, len(prices))
+	copy(sorted, prices)
+	sort.Ints(sorted)
+
+	index := float64(len(sorted)-1) * percentile
+	lower := int(index)
+	upper := lower + 1
+	weight := index - float64(lower)
+
+	if upper >= len(sorted) {
+		return sorted[lower]
+	}
+	return int(float64(sorted[lower])*(1-weight) + float64(sorted[upper])*weight)
 }
 
 type ValuationCompiler struct {

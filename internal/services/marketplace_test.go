@@ -9,13 +9,10 @@ import (
 )
 
 func TestFetchBlocketAdFromAPI(t *testing.T) {
-	cfg := &config.Config{
-		Scraping: config.ScrapingConfig{
-			Blocket: config.BlocketConfig{
-				Enabled: true,
-			},
-		},
-	}
+	valuationTypeEnabled["Blocket"] = true
+	defer func() { valuationTypeEnabled["Blocket"] = false }()
+
+	cfg := &config.Config{}
 
 	svc := NewMarketplaceService(cfg)
 

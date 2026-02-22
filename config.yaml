@@ -10,14 +10,6 @@ app:
   log_level: "debug"
   cache_ttl: 24h
 
-scraping:
-  tradera:
-    enabled: true
-    timeout: 30s
-  blocket:
-    enabled: true
-    timeout: 30s
-
 llm:
   provider: "openrouter"
   api_key: "" # Set via LLM_API_KEY env var

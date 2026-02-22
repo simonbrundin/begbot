@@ -12,6 +12,9 @@ import (
 )
 
 func TestTraderaValuationMethod_ParsesAPIResponse(t *testing.T) {
+	valuationTypeEnabled["Tradera"] = true
+	defer func() { valuationTypeEnabled["Tradera"] = false }()
+
 	// Mock: first request = page load (returns cookies), second = API response
 	requestCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +34,6 @@ func TestTraderaValuationMethod_ParsesAPIResponse(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &config.Config{}
-	cfg.Scraping.Tradera.Enabled = true
 	cfg.Scraping.Tradera.Timeout = 5 * time.Second
 	cfg.Scraping.Tradera.BaseURL = ts.URL
 
@@ -55,6 +57,9 @@ func TestTraderaValuationMethod_ParsesAPIResponse(t *testing.T) {
 }
 
 func TestTraderaValuationMethod_ReturnsErrorWhenNoPrices(t *testing.T) {
+	valuationTypeEnabled["Tradera"] = true
+	defer func() { valuationTypeEnabled["Tradera"] = false }()
+
 	requestCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -70,7 +75,6 @@ func TestTraderaValuationMethod_ReturnsErrorWhenNoPrices(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &config.Config{}
-	cfg.Scraping.Tradera.Enabled = true
 	cfg.Scraping.Tradera.Timeout = 5 * time.Second
 	cfg.Scraping.Tradera.BaseURL = ts.URL
 
@@ -88,8 +92,10 @@ func TestTraderaValuationMethod_ReturnsErrorWhenNoPrices(t *testing.T) {
 }
 
 func TestTraderaValuationMethod_DisabledConfig(t *testing.T) {
+	valuationTypeEnabled["Tradera"] = false
+	defer func() { valuationTypeEnabled["Tradera"] = true }()
+
 	cfg := &config.Config{}
-	cfg.Scraping.Tradera.Enabled = false
 
 	svc := &ValuationService{cfg: cfg}
 	method := &TraderaValuationMethod{svc: svc}
@@ -105,6 +111,9 @@ func TestTraderaValuationMethod_DisabledConfig(t *testing.T) {
 }
 
 func TestTraderaValuationMethod_CachesResult(t *testing.T) {
+	valuationTypeEnabled["Tradera"] = true
+	defer func() { valuationTypeEnabled["Tradera"] = false }()
+
 	requestCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -121,7 +130,6 @@ func TestTraderaValuationMethod_CachesResult(t *testing.T) {
 	defer ts.Close()
 
 	cfg := &config.Config{}
-	cfg.Scraping.Tradera.Enabled = true
 	cfg.Scraping.Tradera.Timeout = 5 * time.Second
 	cfg.Scraping.Tradera.BaseURL = ts.URL
 
