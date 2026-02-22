@@ -282,6 +282,11 @@ func (s *BotService) isNewLink(link string, newLinks []string) bool {
 func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	item := s.marketplaceService.ConvertToPotentialItem(ad)
 
+	// Log shipping info from Blocket API
+	if ad.ShippingCost != nil || ad.ShippingInsurance != nil {
+		s.log(LogLevelInfo, "Blocket API shipping: cost=%v, insurance=%v", ad.ShippingCost, ad.ShippingInsurance)
+	}
+
 	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
 		s.log(LogLevelError, "Failed to extract product info: %v", err)
@@ -291,7 +296,14 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	s.log(LogLevelInfo, "LLM extracted: Manufacturer=%q, Model=%q, Category=%q, Storage=%q",
 		productInfo.Manufacturer, productInfo.Model, productInfo.Category, productInfo.Storage)
 
-	item.BuyShippingCost = int(productInfo.ShippingCost)
+	// Only use LLM's shipping cost if Blocket API didn't provide one
+	if item.BuyShippingCost == 0 && productInfo.ShippingCost > 0 {
+		item.BuyShippingCost = int(productInfo.ShippingCost)
+		s.log(LogLevelInfo, "Using LLM shipping cost: %d", productInfo.ShippingCost)
+	}
+
+	// Log final shipping cost
+	s.log(LogLevelInfo, "Final shipping: cost=%d, insurance=%d", item.BuyShippingCost, item.BuyShippingInsurance)
 
 	validatedProduct, err := s.ValidateListing(ctx, ad)
 	if err != nil {
@@ -350,15 +362,17 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	}
 
 	listing := &models.Listing{
-		ProductID:       &productID,
-		Price:           &price,
-		Link:            ad.Link,
-		Title:           ad.Title,
-		Description:     &ad.AdText,
-		MarketplaceID:   &marketplaceID,
-		Status:          "active",
-		PublicationDate: &now,
-		IsMyListing:     false,
+		ProductID:         &productID,
+		Price:             &price,
+		Link:              ad.Link,
+		Title:             ad.Title,
+		Description:       &ad.AdText,
+		MarketplaceID:     &marketplaceID,
+		Status:            "active",
+		PublicationDate:   &now,
+		IsMyListing:       false,
+		ShippingCost:      func() *int { v := int(item.BuyShippingCost); return &v }(),
+		ShippingInsurance: func() *int { v := item.BuyShippingInsurance; return &v }(),
 	}
 
 	if err := s.database.SaveListing(ctx, listing); err != nil {

@@ -298,16 +298,16 @@ func (p *Postgres) SaveTradedItem(ctx context.Context, item *models.TradedItem) 
 	query := `
 		INSERT INTO traded_items (
 			product_id, storage, color_id,
-			buy_price, buy_shipping_cost, buy_transaction_id, buy_date,
+			buy_price, buy_shipping_cost, buy_shipping_insurance, buy_transaction_id, buy_date,
 			sell_price, sell_packaging_cost, sell_postage_cost, sell_shipping_collected,
 			sell_transaction_id, sell_date, status_id, source_link, listing_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id
 	`
 	return p.db.QueryRowContext(ctx, query,
 		item.ProductID, item.Storage, item.ColorID,
-		item.BuyPrice, item.BuyShippingCost, item.BuyTransactionID, item.BuyDate,
+		item.BuyPrice, item.BuyShippingCost, item.BuyShippingInsurance, item.BuyTransactionID, item.BuyDate,
 		item.SellPrice, item.SellPackagingCost, item.SellPostageCost, item.SellShippingCollected,
 		item.SellTransactionID, item.SellDate, item.StatusID, item.SourceLink, item.ListingID,
 	).Scan(&item.ID)
@@ -322,7 +322,7 @@ func (p *Postgres) UpdateTradedItemStatus(ctx context.Context, id int64, statusI
 func (p *Postgres) GetTradedItemByID(ctx context.Context, id int64) (*models.TradedItem, error) {
 	query := `
 		SELECT id, product_id, storage, color_id,
-			buy_price, buy_shipping_cost, buy_transaction_id, buy_date,
+			buy_price, buy_shipping_cost, buy_shipping_insurance, buy_transaction_id, buy_date,
 			sell_price, sell_packaging_cost, sell_postage_cost, sell_shipping_collected,
 			sell_transaction_id, sell_date, status_id, source_link, created_at, listing_id
 		FROM traded_items WHERE id = $1
@@ -330,7 +330,7 @@ func (p *Postgres) GetTradedItemByID(ctx context.Context, id int64) (*models.Tra
 	var item models.TradedItem
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
 		&item.ID, &item.ProductID, &item.Storage, &item.ColorID,
-		&item.BuyPrice, &item.BuyShippingCost, &item.BuyTransactionID, &item.BuyDate,
+		&item.BuyPrice, &item.BuyShippingCost, &item.BuyShippingInsurance, &item.BuyTransactionID, &item.BuyDate,
 		&item.SellPrice, &item.SellPackagingCost, &item.SellPostageCost, &item.SellShippingCollected,
 		&item.SellTransactionID, &item.SellDate, &item.StatusID, &item.SourceLink, &item.CreatedAt, &item.ListingID,
 	)
@@ -346,7 +346,7 @@ func (p *Postgres) GetTradedItemByID(ctx context.Context, id int64) (*models.Tra
 func (p *Postgres) GetActiveTradedItems(ctx context.Context) ([]models.TradedItem, error) {
 	query := `
 		SELECT id, product_id, storage, color_id,
-			buy_price, buy_shipping_cost, buy_transaction_id, buy_date,
+			buy_price, buy_shipping_cost, buy_shipping_insurance, buy_transaction_id, buy_date,
 			sell_price, sell_packaging_cost, sell_postage_cost, sell_shipping_collected,
 			sell_transaction_id, sell_date, status_id, source_link, created_at, listing_id
 		FROM traded_items WHERE status_id IN (2, 3)
@@ -364,7 +364,7 @@ func (p *Postgres) GetActiveTradedItems(ctx context.Context) ([]models.TradedIte
 func (p *Postgres) GetAllTradedItems(ctx context.Context) ([]models.TradedItem, error) {
 	query := `
 		SELECT id, product_id, storage, color_id,
-			buy_price, buy_shipping_cost, buy_transaction_id, buy_date,
+			buy_price, buy_shipping_cost, buy_shipping_insurance, buy_transaction_id, buy_date,
 			sell_price, sell_packaging_cost, sell_postage_cost, sell_shipping_collected,
 			sell_transaction_id, sell_date, status_id, source_link, created_at, listing_id
 		FROM traded_items
@@ -382,7 +382,7 @@ func (p *Postgres) GetAllTradedItems(ctx context.Context) ([]models.TradedItem, 
 func (p *Postgres) GetSoldTradedItems(ctx context.Context, limit int) ([]models.TradedItem, error) {
 	query := `
 		SELECT id, product_id, storage, color_id,
-			buy_price, buy_shipping_cost, buy_transaction_id, buy_date,
+			buy_price, buy_shipping_cost, buy_shipping_insurance, buy_transaction_id, buy_date,
 			sell_price, sell_packaging_cost, sell_postage_cost, sell_shipping_collected,
 			sell_transaction_id, sell_date, status_id, source_link, created_at, listing_id
 		FROM traded_items WHERE status_id = 5
@@ -400,12 +400,12 @@ func (p *Postgres) GetSoldTradedItems(ctx context.Context, limit int) ([]models.
 
 func (p *Postgres) SaveListing(ctx context.Context, listing *models.Listing) error {
 	query := `
-		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`
 	return p.db.QueryRowContext(ctx, query,
-		listing.ProductID, listing.Price, listing.Link, listing.ConditionID, listing.ShippingCost,
+		listing.ProductID, listing.Price, listing.Link, listing.ConditionID, listing.ShippingCost, listing.ShippingInsurance,
 		listing.Title, listToNullString(listing.Description), listing.MarketplaceID, listing.Status, listing.PublicationDate, listing.SoldDate, listing.IsMyListing,
 		listing.EligibleForShipping, listing.SellerPaysShipping, listing.BuyNow,
 	).Scan(&listing.ID)
@@ -473,7 +473,7 @@ func (p *Postgres) DeleteListing(ctx context.Context, id int64) error {
 
 func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (*models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, title, description,
+		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings WHERE product_id = $1 AND status = 'active'
@@ -481,7 +481,7 @@ func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (
 	var listing models.Listing
 	err := p.db.QueryRowContext(ctx, query, productID).Scan(
 		&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
-		&listing.ShippingCost, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
+		&listing.ShippingCost, &listing.ShippingInsurance, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
 		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
 	)
@@ -728,7 +728,7 @@ func (p *Postgres) scanTradedItems(rows *sql.Rows) ([]models.TradedItem, error) 
 		var item models.TradedItem
 		if err := rows.Scan(
 			&item.ID, &item.ProductID, &item.Storage, &item.ColorID,
-			&item.BuyPrice, &item.BuyShippingCost, &item.BuyTransactionID, &item.BuyDate,
+			&item.BuyPrice, &item.BuyShippingCost, &item.BuyShippingInsurance, &item.BuyTransactionID, &item.BuyDate,
 			&item.SellPrice, &item.SellPackagingCost, &item.SellPostageCost, &item.SellShippingCollected,
 			&item.SellTransactionID, &item.SellDate, &item.StatusID, &item.SourceLink, &item.CreatedAt, &item.ListingID,
 		); err != nil {
@@ -976,7 +976,7 @@ func (p *Postgres) ListingExistsByLink(ctx context.Context, link string) (bool, 
 
 func (p *Postgres) GetAllListings(ctx context.Context, limit, offset int) ([]models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, link, condition_id, shipping_cost, title, description,
+		SELECT id, product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings
@@ -995,7 +995,7 @@ func (p *Postgres) GetAllListings(ctx context.Context, limit, offset int) ([]mod
 		var title, description sql.NullString
 		err := rows.Scan(
 			&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
-			&listing.ShippingCost, &title, &description, &listing.MarketplaceID, &listing.Status,
+			&listing.ShippingCost, &listing.ShippingInsurance, &title, &description, &listing.MarketplaceID, &listing.Status,
 			&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
 			&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
 		)
@@ -1160,7 +1160,7 @@ func (p *Postgres) GetValuationsForListing(ctx context.Context, listingID int64)
 
 func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listing, error) {
 	query := `
-		SELECT id, product_id, price, link, condition_id, shipping_cost, title, description,
+		SELECT id, product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
 			eligible_for_shipping, seller_pays_shipping, buy_now
 		FROM listings WHERE id = $1
@@ -1168,7 +1168,7 @@ func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listin
 	var listing models.Listing
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
 		&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
-		&listing.ShippingCost, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
+		&listing.ShippingCost, &listing.ShippingInsurance, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
 		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow,
 	)
@@ -1249,7 +1249,7 @@ func (p *Postgres) GetLatestValuationByTypeForProduct(ctx context.Context, produ
 			v.id, v.valuation_type_id, vt.name, v.valuation
 		FROM valuations v
 		JOIN valuation_types vt ON v.valuation_type_id = vt.id
-		WHERE v.product_id = $1
+		WHERE v.product_id = $1 AND vt.enabled = true
 		ORDER BY v.valuation_type_id, v.created_at DESC
 	`
 	rows, err := p.db.QueryContext(ctx, query, productID)

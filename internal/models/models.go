@@ -25,6 +25,7 @@ type TradedItem struct {
 	ColorID               *int64     `json:"color_id,omitempty" db:"color_id"`
 	BuyPrice              int        `json:"buy_price" db:"buy_price"`
 	BuyShippingCost       int        `json:"buy_shipping_cost" db:"buy_shipping_cost"`
+	BuyShippingInsurance  int        `json:"buy_shipping_insurance" db:"buy_shipping_insurance"`
 	BuyTransactionID      *int64     `json:"buy_transaction_id,omitempty" db:"buy_transaction_id"`
 	BuyDate               *time.Time `json:"buy_date,omitempty" db:"buy_date"`
 	SellPrice             *int       `json:"sell_price,omitempty" db:"sell_price"`
@@ -52,6 +53,7 @@ type Listing struct {
 	Link                string     `json:"link" db:"link"`
 	ConditionID         *int64     `json:"condition_id,omitempty" db:"condition_id"`
 	ShippingCost        *int       `json:"shipping_cost,omitempty" db:"shipping_cost"`
+	ShippingInsurance   *int       `json:"shipping_insurance,omitempty" db:"shipping_insurance"`
 	Title               string     `json:"title" db:"title"`
 	Description         *string    `json:"description,omitempty" db:"description"`
 	MarketplaceID       *int64     `json:"marketplace_id,omitempty" db:"marketplace_id"`

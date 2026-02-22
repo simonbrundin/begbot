@@ -197,6 +197,7 @@ func (s *Server) inventoryHandler(w http.ResponseWriter, r *http.Request) {
 		if errs := api.CombineErrors(
 			api.ValidateNonNegative(int64(item.BuyPrice), "buy_price"),
 			api.ValidateNonNegative(int64(item.BuyShippingCost), "buy_shipping_cost"),
+			api.ValidateNonNegative(int64(item.BuyShippingInsurance), "buy_shipping_insurance"),
 			api.ValidateNonNegative(int64(item.StatusID), "status_id"),
 		); len(errs) > 0 {
 			api.WriteValidationError(w, errs)

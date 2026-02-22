@@ -29,14 +29,15 @@ func NewMarketplaceService(cfg *config.Config) *MarketplaceService {
 }
 
 type RawAd struct {
-	Link         string
-	Title        string
-	Price        float64
-	AdText       string
-	ImageURLs    []string
-	AdDate       time.Time
-	Marketplace  string
-	ShippingCost *float64 // NULL if unknown, 0 if free, positive value if specified
+	Link              string
+	Title             string
+	Price             float64
+	AdText            string
+	ImageURLs         []string
+	AdDate            time.Time
+	Marketplace       string
+	ShippingCost      *float64 // NULL if unknown, 0 if free, positive value if specified
+	ShippingInsurance *float64 // NULL if unknown, positive value if specified (e.g., köpskydd)
 }
 
 // FetchAdDetails fetches detailed information from an individual ad page
@@ -156,6 +157,9 @@ func (s *MarketplaceService) ConvertToPotentialItem(ad RawAd) *models.TradedItem
 	}
 	if ad.ShippingCost != nil {
 		item.BuyShippingCost = int(*ad.ShippingCost)
+	}
+	if ad.ShippingInsurance != nil {
+		item.BuyShippingInsurance = int(*ad.ShippingInsurance)
 	}
 	return item
 }
@@ -281,6 +285,13 @@ func (s *MarketplaceService) fetchBlocketAdsFromURL(ctx context.Context, searchU
 			apiAd, err := s.fetchBlocketAdFromAPI(ctx, adID)
 			if err == nil && apiAd != nil {
 				ads[i].AdText = apiAd.AdText
+				// Copy shipping and insurance costs from API response
+				if apiAd.ShippingCost != nil {
+					ads[i].ShippingCost = apiAd.ShippingCost
+				}
+				if apiAd.ShippingInsurance != nil {
+					ads[i].ShippingInsurance = apiAd.ShippingInsurance
+				}
 			}
 		}
 	}
@@ -334,7 +345,7 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 		return nil, fmt.Errorf("failed to unmarshal JSON-LD: %w", err)
 	}
 
-	// Parse HTML to extract shipping information
+	// Look for shipping info in the HTML using the specific Blocket structure
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
@@ -342,6 +353,8 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 
 	// Map to store shipping cost by URL (nil = unknown, 0 = free, >0 = specified)
 	shippingCosts := make(map[string]*float64)
+	insuranceCosts := make(map[string]*float64)
+	shippingFoundCount := 0
 
 	// Look for shipping info in the HTML using the specific Blocket structure
 	doc.Find("section article, [data-test='item-card'], .item-card").Each(func(i int, s *goquery.Selection) {
@@ -379,9 +392,23 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 
 		if link != "" && shippingText != "" {
 			shippingCost := extractShippingCost(shippingText)
+			insuranceCost := extractInsuranceCost(shippingText)
 			shippingCosts[link] = shippingCost
+			insuranceCosts[link] = insuranceCost
+			shippingFoundCount++
+			if shippingCost != nil {
+				if insuranceCost != nil {
+					log.Printf("[Blocket] Found shipping for %s: text=%q, cost=%.0f kr, insurance=%.0f kr", link, shippingText, *shippingCost, *insuranceCost)
+				} else {
+					log.Printf("[Blocket] Found shipping for %s: text=%q, cost=%.0f kr", link, shippingText, *shippingCost)
+				}
+			} else {
+				log.Printf("[Blocket] Found shipping text but no cost for %s: %q", link, shippingText)
+			}
 		}
 	})
+
+	log.Printf("[Blocket] Shipping text found for %d items", shippingFoundCount)
 
 	var ads []RawAd
 	for _, item := range structuredData.MainEntity.ItemListElement {
@@ -397,6 +424,12 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 			shippingCostPtr = cost
 		}
 
+		// Get insurance cost from HTML parsing if available
+		var insuranceCostPtr *float64
+		if cost, ok := insuranceCosts[item.Item.URL]; ok {
+			insuranceCostPtr = cost
+		}
+
 		// Extract image URLs from JSON-LD
 		var imageURLs []string
 		if item.Item.Image != "" {
@@ -404,13 +437,14 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 		}
 
 		ad := RawAd{
-			Link:         item.Item.URL,
-			Title:        item.Item.Name,
-			Price:        price,
-			AdText:       "",
-			Marketplace:  "blocket",
-			ShippingCost: shippingCostPtr,
-			ImageURLs:    imageURLs,
+			Link:              item.Item.URL,
+			Title:             item.Item.Name,
+			Price:             price,
+			AdText:            "",
+			Marketplace:       "blocket",
+			ShippingCost:      shippingCostPtr,
+			ShippingInsurance: insuranceCostPtr,
+			ImageURLs:         imageURLs,
 		}
 
 		if ad.Title != "" && ad.Price > 0 {
@@ -418,10 +452,29 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 		}
 	}
 
+	// Log summary of shipping costs
+	shippingCount := 0
+	freeShippingCount := 0
+	insuranceCount := 0
+	for _, ad := range ads {
+		if ad.ShippingCost != nil {
+			shippingCount++
+			if *ad.ShippingCost == 0 {
+				freeShippingCount++
+			}
+		}
+		if ad.ShippingInsurance != nil {
+			insuranceCount++
+		}
+	}
+	log.Printf("[Blocket] Total: %d ads, %d with shipping cost (%d free), %d with insurance", len(ads), shippingCount, freeShippingCount, insuranceCount)
+
 	return ads, nil
 }
 
 func extractShippingCost(text string) *float64 {
+	// Normalize text: replace non-breaking spaces with regular spaces
+	text = strings.ReplaceAll(text, "\u00a0", " ")
 	textLower := strings.ToLower(text)
 
 	// Check for free shipping indicators - return 0 (free shipping)
@@ -442,8 +495,13 @@ func extractShippingCost(text string) *float64 {
 		`\+(\d+)\s*kr[:\s]+frakt`,
 		`frakt[:\s]+(\d+)[\s]*kr`,
 		`frakt[:\s]+från[:\s]+(\d+)`,
+		`frakt[:\s]+från[:\s]+(\d+)\s*kr`,
 		`från[:\s]+(\d+)\s*kr`,
 		`frakt[:\s]+fr\.?[:\s]*(\d+)`,
+		`frakt fr\.?[:\s]+(\d+)`,
+		`frakt fr\.?[:\s]+(\d+)\s*kr`,
+		// Also match "frakt från X" without "kr"
+		`frakt[:\s]+från[:\s]+(\d+)(?:\s*kr)?`,
 	}
 
 	for _, pattern := range patterns {
@@ -461,6 +519,38 @@ func extractShippingCost(text string) *float64 {
 	// If shipping is mentioned but no price found (e.g., "kan skickas"), return nil (unknown)
 	if strings.Contains(textLower, "frakt") || strings.Contains(textLower, "skickas") {
 		return nil
+	}
+
+	return nil
+}
+
+func extractInsuranceCost(text string) *float64 {
+	// Normalize text: replace non-breaking spaces with regular spaces
+	text = strings.ReplaceAll(text, "\u00a0", " ")
+	textLower := strings.ToLower(text)
+
+	if !strings.Contains(textLower, "köpskydd") && !strings.Contains(textLower, "försäkring") {
+		return nil
+	}
+
+	patterns := []string{
+		`köpskydd[:\s]+(\d+)`,
+		`köpskydd[:\s]+(\d+)\s*kr`,
+		`köpskydd[:\s]+(\d+):-`,
+		`försäkring[:\s]+(\d+)`,
+		`försäkring[:\s]+(\d+)\s*kr`,
+		`försäkring[:\s]+(\d+):-`,
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(textLower)
+		if len(matches) > 1 {
+			cost, err := strconv.ParseFloat(matches[1], 64)
+			if err == nil && cost > 0 && cost < 10000 {
+				return &cost
+			}
+		}
 	}
 
 	return nil
@@ -521,6 +611,17 @@ type BlocketAPIResponse struct {
 				SellerPaysShipping  bool `json:"sellerPaysShipping"`
 				BuyNow              bool `json:"buyNow"`
 			} `json:"transactableData"`
+			TransactableUIData struct {
+				Sections struct {
+					Sidebar struct {
+						OptedIn struct {
+							ShippingPrice struct {
+								Text string `json:"text"`
+							} `json:"shippingPrice"`
+						} `json:"optedIn"`
+					} `json:"sidebar"`
+				} `json:"sections"`
+			} `json:"transactableUiData"`
 		} `json:"item-recommerce"`
 	} `json:"loaderData"`
 }
@@ -594,12 +695,30 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 		images = append(images, img.URI)
 	}
 
+	// Extract shipping and insurance costs from shippingPrice text
+	var shippingCost *float64
+	var insuranceCost *float64
+	shippingPriceText := apiResp.LoaderData.ItemRecommerce.TransactableUIData.Sections.Sidebar.OptedIn.ShippingPrice.Text
+
+	if shippingPriceText == "" {
+		log.Printf("[Blocket API] Ad %d: no shippingPrice in response", adID)
+	} else {
+		// Normalize text (replace non-breaking spaces)
+		normalizedText := strings.ReplaceAll(shippingPriceText, "\u00a0", " ")
+		shippingCost = extractShippingCost(normalizedText)
+		insuranceCost = extractInsuranceCost(normalizedText)
+		log.Printf("[Blocket API] Ad %d: shippingPrice=%q, normalized=%q, shippingCost=%v, insuranceCost=%v",
+			adID, shippingPriceText, normalizedText, shippingCost, insuranceCost)
+	}
+
 	return &BlocketAdDetails{
 		RawAd: RawAd{
-			Title:       apiResp.LoaderData.ItemRecommerce.ItemData.Title,
-			AdText:      apiResp.LoaderData.ItemRecommerce.ItemData.Description,
-			Price:       float64(apiResp.LoaderData.ItemRecommerce.ItemData.Price),
-			Marketplace: "blocket",
+			Title:             apiResp.LoaderData.ItemRecommerce.ItemData.Title,
+			AdText:            apiResp.LoaderData.ItemRecommerce.ItemData.Description,
+			Price:             float64(apiResp.LoaderData.ItemRecommerce.ItemData.Price),
+			Marketplace:       "blocket",
+			ShippingCost:      shippingCost,
+			ShippingInsurance: insuranceCost,
 		},
 		ConditionID:         conditionID,
 		EligibleForShipping: &eligible,

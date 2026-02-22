@@ -103,3 +103,208 @@ func TestExtractBlocketAdID(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractShippingCost(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected *float64
+	}{
+		{
+			name:     "frakt från 50 kr",
+			input:    "frakt från 50 kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "frakt från 50 kr with non-breaking space",
+			input:    "Frakt från 39\xa0kr + köpskydd 93\xa0kr",
+			expected: float64Ptr(39),
+		},
+		{
+			name:     "frakt från 50",
+			input:    "frakt från 50",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "Frakt från 75 kr",
+			input:    "Frakt från 75 kr",
+			expected: float64Ptr(75),
+		},
+		{
+			name:     "frakt fr 50 kr",
+			input:    "frakt fr 50 kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "frakt fr. 50 kr",
+			input:    "frakt fr. 50 kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "frakt 63 kr",
+			input:    "frakt 63 kr",
+			expected: float64Ptr(63),
+		},
+		{
+			name:     "frakt 63",
+			input:    "frakt 63",
+			expected: float64Ptr(63),
+		},
+		{
+			name:     "frakt 63:-",
+			input:    "frakt 63:-",
+			expected: float64Ptr(63),
+		},
+		{
+			name:     "gratis frakt",
+			input:    "gratis frakt",
+			expected: float64Ptr(0),
+		},
+		{
+			name:     "fri frakt",
+			input:    "fri frakt",
+			expected: float64Ptr(0),
+		},
+		{
+			name:     "frakt ingår",
+			input:    "frakt ingår",
+			expected: float64Ptr(0),
+		},
+		{
+			name:     "50 kr frakt",
+			input:    "50 kr frakt",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "+ 50 kr frakt",
+			input:    "+ 50 kr frakt",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "frakt: 50 kr",
+			input:    "frakt: 50 kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "frakt:50kr",
+			input:    "frakt:50kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "no shipping info",
+			input:    "some random text without shipping",
+			expected: nil,
+		},
+		{
+			name:     "kan skickas",
+			input:    "kan skickas",
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractShippingCost(tc.input)
+			if tc.expected == nil {
+				if result != nil {
+					t.Errorf("extractShippingCost(%q) = %v, want nil", tc.input, *result)
+				}
+				return
+			}
+			if result == nil {
+				t.Errorf("extractShippingCost(%q) = nil, want %v", tc.input, *tc.expected)
+				return
+			}
+			if *result != *tc.expected {
+				t.Errorf("extractShippingCost(%q) = %v, want %v", tc.input, *result, *tc.expected)
+			}
+		})
+	}
+}
+
+func float64Ptr(v float64) *float64 {
+	return &v
+}
+
+func TestExtractInsuranceCost(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected *float64
+	}{
+		{
+			name:     "köpskydd 73 kr",
+			input:    "Frakt från 69 kr + köpskydd 73 kr",
+			expected: float64Ptr(73),
+		},
+		{
+			name:     "köpskydd 50 kr",
+			input:    "köpskydd 50 kr",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "köpskydd 50",
+			input:    "köpskydd 50",
+			expected: float64Ptr(50),
+		},
+		{
+			name:     "köpskydd: 75 kr",
+			input:    "köpskydd: 75 kr",
+			expected: float64Ptr(75),
+		},
+		{
+			name:     "köpskydd 75:-",
+			input:    "köpskydd 75:-",
+			expected: float64Ptr(75),
+		},
+		{
+			name:     "försäkring 100 kr",
+			input:    "försäkring 100 kr",
+			expected: float64Ptr(100),
+		},
+		{
+			name:     "försäkring 100",
+			input:    "försäkring 100",
+			expected: float64Ptr(100),
+		},
+		{
+			name:     "försäkring: 80 kr",
+			input:    "försäkring: 80 kr",
+			expected: float64Ptr(80),
+		},
+		{
+			name:     "försäkring 80:-",
+			input:    "försäkring 80:-",
+			expected: float64Ptr(80),
+		},
+		{
+			name:     "no insurance",
+			input:    "frakt från 50 kr",
+			expected: nil,
+		},
+		{
+			name:     "only shipping text",
+			input:    "kan skickas",
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractInsuranceCost(tc.input)
+			if tc.expected == nil {
+				if result != nil {
+					t.Errorf("extractInsuranceCost(%q) = %v, want nil", tc.input, *result)
+				}
+				return
+			}
+			if result == nil {
+				t.Errorf("extractInsuranceCost(%q) = nil, want %v", tc.input, *tc.expected)
+				return
+			}
+			if *result != *tc.expected {
+				t.Errorf("extractInsuranceCost(%q) = %v, want %v", tc.input, *result, *tc.expected)
+			}
+		})
+	}
+}

@@ -201,6 +201,14 @@ const formatValuationAsSEK = (sek: number | null | undefined) => {
   return `${sek.toLocaleString("sv-SE")} kr`;
 };
 
+const formatDate = (date: string | null | undefined) => {
+  if (!date) return "-";
+  const d = new Date(date);
+  const dateStr = d.toLocaleDateString("sv-SE");
+  const timeStr = d.toLocaleTimeString("sv-SE", { hour: '2-digit', minute: '2-digit' });
+  return `${dateStr} ${timeStr}`;
+};
+
 const statusClass = (status: string) => {
   const classes: Record<string, string> = {
     draft: "badge badge-warning",
@@ -290,15 +298,21 @@ const errorMessage = computed(() => {
                   }}
                 </p>
                 <p class="text-sm text-slate-400">
-                  Nypris: {{ formatValuationAsSEK(item.Valuations?.find(v => v.valuation_type_id === 4)?.valuation) }}
-                </p>
-                <p class="text-sm text-slate-400">
                   Frakt:
                   {{
                     item.Listing.shipping_cost !== null &&
                     item.Listing.shipping_cost !== undefined
                       ? formatPriceAsSEK(item.Listing.shipping_cost)
                       : "Okänt"
+                  }}
+                </p>
+                <p class="text-sm text-slate-400">
+                  Köpskydd:
+                  {{
+                    item.Listing.shipping_insurance !== null &&
+                    item.Listing.shipping_insurance !== undefined
+                      ? formatPriceAsSEK(item.Listing.shipping_insurance)
+                      : "-"
                   }}
                 </p>
                 <p class="text-sm text-slate-400">
@@ -351,18 +365,11 @@ const errorMessage = computed(() => {
               </span>
             </div>
 
-            <p
-              v-if="item.Listing?.description"
-              class="text-sm text-slate-400 mb-2"
-            >
-              {{ item.Listing.description?.substring(0, 100) }}...
-            </p>
-
             <div
               v-if="item.Listing"
               class="flex justify-between items-center text-sm text-slate-400"
             >
-              <span>{{ marketplaceName(item.Listing.marketplace_id) }}</span>
+              <span>{{ marketplaceName(item.Listing.marketplace_id) }} · {{ formatDate(item.Listing.publication_date) }}</span>
               <a
                 :href="item.Listing.link"
                 target="_blank"
