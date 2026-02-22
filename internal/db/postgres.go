@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -1267,18 +1268,18 @@ func (p *Postgres) GetLatestValuationByTypeForProduct(ctx context.Context, produ
 	return valuations, rows.Err()
 }
 
-func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, productID int64) (int, error) {
+func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, productID int64) (int, float64, error) {
 	valuations, err := p.GetLatestValuationByTypeForProduct(ctx, productID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if len(valuations) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	configs, err := p.GetProductValuationTypeConfigs(ctx, productID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	activeMap := make(map[int16]bool)
 	weightMap := make(map[int16]float64)
@@ -1289,7 +1290,7 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 
 	enabledTypes, err := p.GetValuationTypes(ctx)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	enabledMap := make(map[int16]bool)
 	for _, t := range enabledTypes {
@@ -1298,7 +1299,7 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 		}
 	}
 
-	activeCount := 0
+	activeValuations := make([]ValuationWithType, 0)
 	for _, v := range valuations {
 		if !enabledMap[v.ValuationTypeID] {
 			continue
@@ -1306,34 +1307,50 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
 			continue
 		}
-		activeCount++
+		activeValuations = append(activeValuations, v)
+	}
+
+	activeCount := len(activeValuations)
+	if activeCount == 0 {
+		return 0, 0, nil
 	}
 
 	total := 0.0
 	totalWeight := 0.0
-	for _, v := range valuations {
-		if !enabledMap[v.ValuationTypeID] {
-			continue
-		}
-		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
-			continue
-		}
+	for _, v := range activeValuations {
 		weight := weightMap[v.ValuationTypeID]
 		if weight <= 0 {
-			if activeCount > 0 {
-				weight = 100.0 / float64(activeCount)
-			} else {
-				weight = 1.0
-			}
+			weight = 100.0 / float64(activeCount)
 		}
 		total += float64(v.Valuation) * weight
 		totalWeight += weight
 	}
 
 	if totalWeight == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
-	return int(total / totalWeight), nil
+
+	weightedValuation := int(total / totalWeight)
+
+	var confidence float64 = 100
+	if activeCount > 1 {
+		sum := 0.0
+		for _, v := range activeValuations {
+			sum += float64(v.Valuation)
+		}
+		mean := sum / float64(activeCount)
+		variance := 0.0
+		for _, v := range activeValuations {
+			variance += math.Pow(float64(v.Valuation)-mean, 2)
+		}
+		variance /= float64(activeCount)
+		stdDev := math.Sqrt(variance)
+		if mean > 0 {
+			confidence = math.Max(0, 100-(stdDev/math.Abs(mean)*100))
+		}
+	}
+
+	return weightedValuation, confidence, nil
 }
 
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
@@ -1388,12 +1405,13 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 }
 
 type ListingWithProfit struct {
-	Listing           models.Listing
-	Product           *models.Product
-	Valuations        []ValuationWithType
-	PotentialProfit   int
-	DiscountPercent   float64
-	ComputedValuation int
+	Listing             models.Listing
+	Product             *models.Product
+	Valuations          []ValuationWithType
+	PotentialProfit     int
+	DiscountPercent     float64
+	ComputedValuation   int
+	ValuationConfidence float64
 }
 
 func (p *Postgres) GetListingsWithProfit(ctx context.Context, limit, offset int) ([]ListingWithProfit, error) {
@@ -1408,14 +1426,16 @@ func (p *Postgres) GetListingsWithProfit(ctx context.Context, limit, offset int)
 		listingWithP := ListingWithProfit{Listing: l}
 
 		computedVal := 0
+		valuationConfidence := 0.0
 		if l.ProductID != nil {
 			var cvErr error
-			computedVal, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
+			computedVal, valuationConfidence, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
 			if cvErr != nil {
 				log.Printf("GetListingsWithProfit: failed to compute valuation for product %d: %v", *l.ProductID, cvErr)
 			}
 		}
 		listingWithP.ComputedValuation = computedVal
+		listingWithP.ValuationConfidence = valuationConfidence
 
 		if l.Price != nil {
 			shippingCost := 0
@@ -1475,9 +1495,10 @@ func (p *Postgres) GetPotentialListings(ctx context.Context, limit, offset int) 
 		listingWithP := ListingWithProfit{Listing: l}
 
 		computedVal := 0
+		valuationConfidence := 0.0
 		if l.ProductID != nil {
 			var cvErr error
-			computedVal, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
+			computedVal, valuationConfidence, cvErr = p.ComputeWeightedValuationForProduct(ctx, *l.ProductID)
 			if cvErr != nil {
 				log.Printf("GetPotentialListings: failed to compute valuation for product %d: %v", *l.ProductID, cvErr)
 			}
@@ -1495,6 +1516,7 @@ func (p *Postgres) GetPotentialListings(ctx context.Context, limit, offset int) 
 				listingWithP.PotentialProfit = profit
 				listingWithP.DiscountPercent = discountPercent
 				listingWithP.ComputedValuation = computedVal
+				listingWithP.ValuationConfidence = valuationConfidence
 			} else {
 				continue
 			}
