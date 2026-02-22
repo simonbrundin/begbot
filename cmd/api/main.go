@@ -391,7 +391,27 @@ func (s *Server) listingItemHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at FROM products ORDER BY created_at DESC`)
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	offset := (page - 1) * pageSize
+
+	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2`, pageSize, offset)
 	if err != nil {
 		api.WriteServerError(w, err.Error())
 		return
@@ -450,8 +470,35 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 
 		products = append(products, p)
 	}
+
+	var totalCount int
+	err = s.db.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM products").Scan(&totalCount)
+	if err != nil {
+		logger.Printf("Warning: GetProductCount error: %v", err)
+		totalCount = len(products)
+	}
+
+	totalPages := totalCount / pageSize
+	if totalCount%pageSize > 0 {
+		totalPages++
+	}
+
+	type PaginatedResponse struct {
+		Data       []models.Product `json:"data"`
+		TotalCount int              `json:"total_count"`
+		Page       int              `json:"page"`
+		PageSize   int              `json:"page_size"`
+		TotalPages int              `json:"total_pages"`
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(products)
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       products,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
 }
 
 func (s *Server) productsHandler(w http.ResponseWriter, r *http.Request) {
