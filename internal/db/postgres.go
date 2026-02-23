@@ -120,11 +120,12 @@ func (p *Postgres) Migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS traded_items (
 			id SERIAL PRIMARY KEY,
-			product_id INTEGER REFERENCES products(id),
+			product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
 			storage SMALLINT,
 			color_id INTEGER REFERENCES colors(id),
 			buy_price INTEGER,
 			buy_shipping_cost INTEGER DEFAULT 0,
+			buy_shipping_insurance INTEGER DEFAULT 0,
 			buy_transaction_id INTEGER REFERENCES transactions(id),
 			buy_date TIMESTAMPTZ,
 			sell_price INTEGER,
@@ -136,11 +137,11 @@ func (p *Postgres) Migrate() error {
 			status_id SMALLINT REFERENCES trade_statuses(id) DEFAULT 1,
 			source_link TEXT,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
-			listing_id INTEGER REFERENCES listings(id)
+			listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS listings (
 			id SERIAL PRIMARY KEY,
-			product_id INTEGER REFERENCES products(id),
+			product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
 			price INTEGER,
 			link TEXT,
 			condition_id SMALLINT REFERENCES conditions(id),
@@ -281,6 +282,10 @@ func (p *Postgres) Migrate() error {
 			PRIMARY KEY (product_id, valuation_type_id)
 		)`,
 		`ALTER TABLE product_valuation_type_config ADD COLUMN IF NOT EXISTS weight NUMERIC NOT NULL DEFAULT 0`,
+		`ALTER TABLE traded_items DROP CONSTRAINT IF EXISTS traded_items_product_id_fkey`,
+		`ALTER TABLE traded_items ADD CONSTRAINT traded_items_product_id_fkey FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE`,
+		`ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_product_id_fkey`,
+		`ALTER TABLE listings ADD CONSTRAINT listings_product_id_fkey FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE`,
 	}
 
 	for i, query := range queries {

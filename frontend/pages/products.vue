@@ -1,7 +1,16 @@
 <template>
   <div>
-    <div class="flex justify-between items-center mb-6">
-      <h1 class="page-header">Produkter</h1>
+    <div class="flex justify-between items-center mb-4">
+      <div class="flex items-center gap-4">
+        <h1 class="page-header">Produkter</h1>
+        <input
+          v-model="searchQuery"
+          type="text"
+          class="input w-64"
+          placeholder="Sök produkter..."
+          @input="onSearchInput"
+        />
+      </div>
       <div class="flex gap-2">
         <button @click="collectOutdatedValuations" :disabled="collectingOutdated" class="btn btn-secondary">
           {{ collectingOutdated ? 'Uppdaterar...' : 'Uppdatera alla' }}
@@ -10,6 +19,60 @@
           Lägg till produkt
         </button>
       </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <select v-model="enabledFilter" class="input w-36" @change="onFilterChange">
+        <option value="">Alla status</option>
+        <option value="true">Aktiverade</option>
+        <option value="false">Inaktiverade</option>
+      </select>
+
+      <select v-model="categoryFilter" class="input w-40" @change="onFilterChange">
+        <option value="">Alla kategorier</option>
+        <option v-for="cat in availableCategories" :key="cat" :value="cat">
+          {{ cat }}
+        </option>
+      </select>
+
+      <div class="flex items-center gap-2">
+        <input
+          v-model="minWeightedInput"
+          type="number"
+          class="input w-28"
+          placeholder="Min värdering"
+          @input="onMinWeightedInput"
+        />
+        <span class="text-slate-500">-</span>
+        <input
+          v-model="maxWeightedInput"
+          type="number"
+          class="input w-28"
+          placeholder="Max värdering"
+          @input="onMaxWeightedInput"
+        />
+      </div>
+
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-slate-400">Inte värderat på</span>
+        <input
+          v-model.number="stalenessDays"
+          type="number"
+          class="input w-20"
+          placeholder="dagar"
+          @input="onFilterChange"
+        />
+        <span class="text-sm text-slate-400">dagar</span>
+      </div>
+
+      <button
+        v-if="hasActiveFilters"
+        @click="clearFilters"
+        class="text-sm text-slate-400 hover:text-slate-300"
+      >
+        Rensa filter
+      </button>
     </div>
 
     <!-- Save status toast -->
@@ -34,8 +97,33 @@
         </thead>
         <tbody>
           <tr v-for="product in sortedProducts" :key="product.id">
-            <td class="font-medium text-slate-100">{{ product.brand || '-' }}</td>
-            <td>{{ product.name || '-' }}</td>
+            <td class="font-medium text-slate-100">
+              <template v-if="isEditingCell(product.id, 'brand')">
+                <input
+                  v-model="editingValue"
+                  @keyup.enter="saveField(product.id, 'brand')"
+                  @keyup.escape="cancelEditField"
+                  class="input input-sm w-32"
+                  ref="brandInput"
+                />
+              </template>
+              <template v-else>
+                <span @click="startEditField(product, 'brand')" class="cursor-pointer hover:text-primary-300">{{ product.brand || '-' }}</span>
+              </template>
+            </td>
+            <td>
+              <template v-if="isEditingCell(product.id, 'name')">
+                <input
+                  v-model="editingValue"
+                  @keyup.enter="saveField(product.id, 'name')"
+                  @keyup.escape="cancelEditField"
+                  class="input input-sm w-32"
+                />
+              </template>
+              <template v-else>
+                <span @click="startEditField(product, 'name')" class="cursor-pointer hover:text-primary-300">{{ product.name || '-' }}</span>
+              </template>
+            </td>
             <td>{{ product.category || '-' }}</td>
             <template v-for="vt in enabledValuationTypes" :key="vt.id">
               <td class="text-sm" :class="{ 'opacity-40': !isTypeActiveForProduct(product.id, vt.id) }">
@@ -265,6 +353,71 @@ const page = ref(1)
 const pageSize = ref(20)
 const totalCount = ref(0)
 const totalPages = ref(0)
+const searchQuery = ref('')
+const enabledFilter = ref('')
+const categoryFilter = ref('')
+const minWeighted = ref<number | null>(null)
+const maxWeighted = ref<number | null>(null)
+const minWeightedInput = ref('')
+const maxWeightedInput = ref('')
+
+const onMinWeightedInput = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const val = target.value
+  minWeighted.value = val === '' ? null : parseInt(val, 10)
+  onFilterChange()
+}
+
+const onMaxWeightedInput = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const val = target.value
+  maxWeighted.value = val === '' ? null : parseInt(val, 10)
+  onFilterChange()
+}
+const stalenessDays = ref<number | null>(null)
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+const onSearchInput = () => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    page.value = 1
+    fetchData()
+  }, 300)
+}
+
+const onFilterChange = () => {
+  page.value = 1
+  fetchData()
+}
+
+const hasActiveFilters = computed(() => {
+  return !!(
+    searchQuery.value ||
+    enabledFilter.value ||
+    categoryFilter.value ||
+    minWeighted.value ||
+    maxWeighted.value ||
+    stalenessDays.value
+  )
+})
+
+const availableCategories = computed(() => {
+  const cats = new Set(products.value.map(p => p.category).filter(Boolean))
+  return Array.from(cats).sort()
+})
+
+const clearFilters = () => {
+  searchQuery.value = ''
+  enabledFilter.value = ''
+  categoryFilter.value = ''
+  minWeighted.value = null
+  maxWeighted.value = null
+  minWeightedInput.value = ''
+  maxWeightedInput.value = ''
+  stalenessDays.value = null
+  page.value = 1
+  fetchData()
+}
 
 // Per-product valuation type active states in edit form (typeId -> isActive)
 const editingValuationTypeActive = ref<Record<number, boolean>>({})
@@ -360,6 +513,45 @@ const form = ref({ ...defaultForm })
 const sortColumn = ref<string | null>(null)
 const sortDirection = ref<'asc' | 'desc'>('asc')
 
+const editingCell = ref<{ productId: number; field: string } | null>(null)
+const editingValue = ref('')
+
+const startEditField = (product: Product, field: string) => {
+  editingCell.value = { productId: product.id, field }
+  editingValue.value = product[field as keyof Product] as string || ''
+}
+
+const saveField = async (productId: number, field: string) => {
+  const idx = products.value.findIndex(p => p.id === productId)
+  if (idx === -1) return
+
+  const product = products.value[idx]
+  const oldValue = product[field as keyof Product]
+  const newValue = editingValue.value
+
+  try {
+    await api.put(`/products/${productId}`, { [field]: newValue })
+    ;(product as any)[field] = newValue
+    showSaveStatus('success', 'Sparat')
+  } catch (e) {
+    console.error('Failed to save field:', e)
+    ;(product as any)[field] = oldValue
+    showSaveStatus('error', 'Kunde inte spara')
+  } finally {
+    editingCell.value = null
+    editingValue.value = ''
+  }
+}
+
+const cancelEditField = () => {
+  editingCell.value = null
+  editingValue.value = ''
+}
+
+const isEditingCell = (productId: number, field: string) => {
+  return editingCell.value?.productId === productId && editingCell.value?.field === field
+}
+
 const getLatestValuationDate = (productId: number): Date | null => {
   const valuations = valuationsByProduct.value[productId]
   if (!valuations || valuations.length === 0) return null
@@ -370,9 +562,30 @@ const getLatestValuationDate = (productId: number): Date | null => {
 }
 
 const sortedProducts = computed(() => {
-  if (!sortColumn.value) return products.value
+  if (!products.value || products.value.length === 0) return []
+  
+  // Get numeric values
+  const minNum = minWeighted.value ?? 0
+  const maxNum = maxWeighted.value ?? 0
+  const hasMinFilter = minNum > 0
+  const hasMaxFilter = maxNum > 0
+  
+  // Filter by weighted valuation (client-side)
+  let filtered = products.value
+  if (hasMinFilter || hasMaxFilter) {
+    filtered = products.value.filter(p => {
+      const wv = weightedValuations.value[p.id]
+      if (!wv || typeof wv.average !== 'number') return true
+      const avg = wv.average
+      if (hasMinFilter && avg < minNum) return false
+      if (hasMaxFilter && avg > maxNum) return false
+      return true
+    })
+  }
+  
+  if (!sortColumn.value) return filtered
 
-  return [...products.value].sort((a, b) => {
+  return [...filtered].sort((a, b) => {
     let aVal: any
     let bVal: any
 
@@ -458,6 +671,18 @@ const fetchData = async () => {
       page: page.value.toString(),
       page_size: pageSize.value.toString()
     })
+    if (searchQuery.value.trim()) {
+      params.set('search', searchQuery.value.trim())
+    }
+    if (enabledFilter.value) {
+      params.set('enabled', enabledFilter.value)
+    }
+    if (categoryFilter.value) {
+      params.set('category', categoryFilter.value)
+    }
+    if (stalenessDays.value) {
+      params.set('staleness', stalenessDays.value.toString())
+    }
     const [prodsRes, typesRes] = await Promise.allSettled([
       api.get<PaginatedResponse<Product>>(`/products?${params}`),
       api.get<ValuationType[]>('/valuation-types')

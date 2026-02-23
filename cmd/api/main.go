@@ -394,6 +394,13 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 
 	pageStr := r.URL.Query().Get("page")
 	pageSizeStr := r.URL.Query().Get("page_size")
+	search := r.URL.Query().Get("search")
+	enabledStr := r.URL.Query().Get("enabled")
+	category := r.URL.Query().Get("category")
+	minWeightedStr := r.URL.Query().Get("min_weighted")
+	maxWeightedStr := r.URL.Query().Get("max_weighted")
+	hasValuationStr := r.URL.Query().Get("has_valuation")
+	stalenessStr := r.URL.Query().Get("staleness")
 
 	page := 1
 	pageSize := 20
@@ -411,36 +418,186 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * pageSize
 
-	rows, err := s.db.DB().QueryContext(ctx, `SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2`, pageSize, offset)
+	// Build WHERE clause dynamically
+	var whereClause string
+	var whereArgs []interface{}
+	argNum := 1
+
+	// Search filter
+	searchPattern := "%" + search + "%"
+	if search != "" {
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += fmt.Sprintf("(p.brand ILIKE $%d OR p.name ILIKE $%d OR p.category ILIKE $%d OR p.model_variant ILIKE $%d)", argNum, argNum, argNum, argNum)
+		whereArgs = append(whereArgs, searchPattern)
+		argNum++
+	}
+
+	// Enabled filter
+	if enabledStr != "" {
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += fmt.Sprintf("p.enabled = $%d", argNum)
+		whereArgs = append(whereArgs, enabledStr == "true")
+		argNum++
+	}
+
+	// Category filter
+	if category != "" {
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += fmt.Sprintf("p.category = $%d", argNum)
+		whereArgs = append(whereArgs, category)
+		argNum++
+	}
+
+	// Has valuation types filter
+	if hasValuationStr != "" {
+		if whereClause != "" {
+			whereClause += " AND "
+		}
+		whereClause += fmt.Sprintf("EXISTS (SELECT 1 FROM valuations v2 WHERE v2.product_id = p.id AND v2.valuation_type_id = ANY(ARRAY[%s]::int[]))", hasValuationStr)
+	}
+
+	// Staleness filter (days since last valuation)
+	if stalenessStr != "" {
+		if days, err := strconv.Atoi(stalenessStr); err == nil && days > 0 {
+			if whereClause != "" {
+				whereClause += " AND "
+			}
+			whereClause += fmt.Sprintf("NOT EXISTS (SELECT 1 FROM valuations v3 WHERE v3.product_id = p.id AND v3.created_at > NOW() - INTERVAL '%d days')", days)
+		}
+	}
+
+	if whereClause != "" {
+		whereClause = "WHERE " + whereClause
+	}
+
+	// Query with weighted valuation calculation
+	var query string
+	if minWeightedStr != "" || maxWeightedStr != "" {
+		// Complex query with weighted valuation
+		minWeighted := 0
+		maxWeighted := 0
+		if minWeightedStr != "" {
+			minWeighted, _ = strconv.Atoi(minWeightedStr)
+		}
+		if maxWeightedStr != "" {
+			maxWeighted, _ = strconv.Atoi(maxWeightedStr)
+		}
+
+		// Build weighted filter for HAVING clause
+		var weightedHaving string
+		if minWeighted > 0 && maxWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation BETWEEN %d AND %d", minWeighted, maxWeighted)
+		} else if minWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation >= %d", minWeighted)
+		} else if maxWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation <= %d", maxWeighted)
+		}
+
+		// Correct CTE with proper weighted calculation
+		weightedQuery := fmt.Sprintf(`
+			WITH product_valuations AS (
+				SELECT 
+					p.id as product_id,
+					COALESCE(
+						SUM(v.valuation * COALESCE(pvc.weight, 0)) / 
+						NULLIF(SUM(CASE WHEN pvc.is_active = true THEN pvc.weight ELSE 0 END), 0),
+						0
+					) as weighted_valuation
+				FROM products p
+				LEFT JOIN valuations v ON v.product_id = p.id
+				LEFT JOIN product_valuation_type_config pvc ON pvc.product_id = p.id 
+					AND pvc.valuation_type_id = v.valuation_type_id
+				GROUP BY p.id
+				%s
+			)
+		`, weightedHaving)
+
+		// Use product filter whereClause (without weighted filters)
+		query = weightedQuery + fmt.Sprintf(`
+			SELECT p.id, p.brand, p.name, p.category, p.model_variant, 
+			       p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at,
+			       pv.weighted_valuation
+			FROM products p
+			LEFT JOIN product_valuations pv ON pv.product_id = p.id
+			%s
+			ORDER BY p.created_at DESC
+			LIMIT $%d OFFSET $%d
+		`, whereClause, argNum, argNum+1)
+		whereArgs = append(whereArgs, pageSize, offset)
+	} else {
+		// Simple query without weighted valuation
+		query = fmt.Sprintf(`
+			SELECT p.id, p.brand, p.name, p.category, p.model_variant, 
+			       p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at
+			FROM products p
+			%s
+			ORDER BY p.created_at DESC
+			LIMIT $%d OFFSET $%d
+		`, whereClause, argNum, argNum+1)
+		whereArgs = append(whereArgs, pageSize, offset)
+	}
+
+	rows, err := s.db.DB().QueryContext(ctx, query, whereArgs...)
 	if err != nil {
+		logger.Printf("getProducts query error: %v", err)
+		logger.Printf("Query: %s", query)
+		logger.Printf("Args: %v", whereArgs)
 		api.WriteServerError(w, err.Error())
 		return
 	}
 	defer rows.Close()
 
 	var products []models.Product
+	hasWeightedCol := minWeightedStr != "" || maxWeightedStr != ""
+
 	for rows.Next() {
 		var p models.Product
-		var brand, name, category, modelVariant sql.NullString
+		var brand, name, categoryVal, modelVariant sql.NullString
 		var sellPackagingCost, sellPostageCost int
 		var newPrice sql.NullInt64
 		var enabled sql.NullBool
 		var createdAt sql.NullTime
+		var weightedVal sql.NullFloat64
 
-		if err := rows.Scan(
-			&p.ID,
-			&brand,
-			&name,
-			&category,
-			&modelVariant,
-			&sellPackagingCost,
-			&sellPostageCost,
-			&newPrice,
-			&enabled,
-			&createdAt,
-		); err != nil {
-			api.WriteServerError(w, err.Error())
-			return
+		if hasWeightedCol {
+			if err := rows.Scan(
+				&p.ID,
+				&brand,
+				&name,
+				&categoryVal,
+				&modelVariant,
+				&sellPackagingCost,
+				&sellPostageCost,
+				&newPrice,
+				&enabled,
+				&createdAt,
+				&weightedVal,
+			); err != nil {
+				api.WriteServerError(w, err.Error())
+				return
+			}
+		} else {
+			if err := rows.Scan(
+				&p.ID,
+				&brand,
+				&name,
+				&categoryVal,
+				&modelVariant,
+				&sellPackagingCost,
+				&sellPostageCost,
+				&newPrice,
+				&enabled,
+				&createdAt,
+			); err != nil {
+				api.WriteServerError(w, err.Error())
+				return
+			}
 		}
 
 		if brand.Valid {
@@ -449,8 +606,8 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 		if name.Valid {
 			p.Name = &name.String
 		}
-		if category.Valid {
-			p.Category = &category.String
+		if categoryVal.Valid {
+			p.Category = &categoryVal.String
 		}
 		if modelVariant.Valid {
 			p.ModelVariant = &modelVariant.String
@@ -471,8 +628,57 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 		products = append(products, p)
 	}
 
+	// Count query - needs to account for all filters including weighted
 	var totalCount int
-	err = s.db.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM products").Scan(&totalCount)
+	if minWeightedStr != "" || maxWeightedStr != "" {
+		// Count with weighted filter using CTE
+		minWeighted := 0
+		maxWeighted := 0
+		if minWeightedStr != "" {
+			minWeighted, _ = strconv.Atoi(minWeightedStr)
+		}
+		if maxWeightedStr != "" {
+			maxWeighted, _ = strconv.Atoi(maxWeightedStr)
+		}
+
+		var weightedHaving string
+		if minWeighted > 0 && maxWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation BETWEEN %d AND %d", minWeighted, maxWeighted)
+		} else if minWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation >= %d", minWeighted)
+		} else if maxWeighted > 0 {
+			weightedHaving = fmt.Sprintf("HAVING weighted_valuation <= %d", maxWeighted)
+		}
+
+		countQuery := fmt.Sprintf(`
+			WITH product_valuations AS (
+				SELECT 
+					p.id as product_id,
+					COALESCE(
+						SUM(v.valuation * COALESCE(pvc.weight, 0)) / 
+						NULLIF(SUM(CASE WHEN pvc.is_active = true THEN pvc.weight ELSE 0 END), 0),
+						0
+					) as weighted_valuation
+				FROM products p
+				LEFT JOIN valuations v ON v.product_id = p.id
+				LEFT JOIN product_valuation_type_config pvc ON pvc.product_id = p.id 
+					AND pvc.valuation_type_id = v.valuation_type_id
+				GROUP BY p.id
+				%s
+			)
+			SELECT COUNT(*) FROM product_valuations pv
+			JOIN products p ON p.id = pv.product_id
+			%s
+		`, weightedHaving, whereClause)
+
+		err = s.db.DB().QueryRowContext(ctx, countQuery, whereArgs[:len(whereArgs)-2]...).Scan(&totalCount)
+	} else if search != "" || enabledStr != "" || category != "" || hasValuationStr != "" || stalenessStr != "" {
+		// Count with product filters only
+		countQuery := "SELECT COUNT(*) FROM products p " + whereClause
+		err = s.db.DB().QueryRowContext(ctx, countQuery, whereArgs...).Scan(&totalCount)
+	} else {
+		err = s.db.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM products").Scan(&totalCount)
+	}
 	if err != nil {
 		logger.Printf("Warning: GetProductCount error: %v", err)
 		totalCount = len(products)
@@ -555,18 +761,49 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case "PUT":
-		var product models.Product
-		if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
+		var inputProduct models.Product
+		if err := json.NewDecoder(r.Body).Decode(&inputProduct); err != nil {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 			return
 		}
-		product.ID = id
-		if err := s.db.UpdateProduct(r.Context(), &product); err != nil {
+
+		existingProduct, err := s.db.GetProductByID(r.Context(), id)
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		if existingProduct == nil {
+			api.WriteServerError(w, "product not found")
+			return
+		}
+
+		if inputProduct.Brand != nil {
+			existingProduct.Brand = inputProduct.Brand
+		}
+		if inputProduct.Name != nil {
+			existingProduct.Name = inputProduct.Name
+		}
+		if inputProduct.Category != nil {
+			existingProduct.Category = inputProduct.Category
+		}
+		if inputProduct.ModelVariant != nil {
+			existingProduct.ModelVariant = inputProduct.ModelVariant
+		}
+		existingProduct.SellPackagingCost = inputProduct.SellPackagingCost
+		existingProduct.SellPostageCost = inputProduct.SellPostageCost
+		if inputProduct.NewPrice != nil {
+			existingProduct.NewPrice = inputProduct.NewPrice
+		}
+		if inputProduct.Enabled != nil {
+			existingProduct.Enabled = inputProduct.Enabled
+		}
+
+		if err := s.db.UpdateProduct(r.Context(), existingProduct); err != nil {
 			api.WriteServerError(w, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(product)
+		json.NewEncoder(w).Encode(existingProduct)
 	case "DELETE":
 		if err := s.db.DeleteProduct(r.Context(), id); err != nil {
 			api.WriteServerError(w, err.Error())
