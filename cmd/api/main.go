@@ -106,6 +106,7 @@ func main() {
 	mux.Handle("/api/listings/", authMiddleware.Middleware(http.HandlerFunc(server.listingItemHandler)))
 	mux.Handle("/api/products", authMiddleware.Middleware(http.HandlerFunc(server.productsHandler)))
 	mux.Handle("/api/products/", authMiddleware.Middleware(http.HandlerFunc(server.productItemHandler)))
+	mux.Handle("/api/products/auto-enable-check", authMiddleware.Middleware(http.HandlerFunc(server.productAutoEnableCheckHandler)))
 	mux.Handle("/api/transactions", authMiddleware.Middleware(http.HandlerFunc(server.transactionsHandler)))
 	mux.Handle("/api/transactions/", authMiddleware.Middleware(http.HandlerFunc(server.transactionItemHandler)))
 	mux.Handle("/api/transaction-types", authMiddleware.Middleware(http.HandlerFunc(server.getTransactionTypes)))
@@ -737,6 +738,109 @@ func (s *Server) productsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) productAutoEnableCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	productIDStr := r.URL.Query().Get("product_id")
+	if productIDStr == "" {
+		api.WriteBadRequest(w, "product_id is required")
+		return
+	}
+
+	productID, err := strconv.ParseInt(productIDStr, 10, 64)
+	if err != nil {
+		api.WriteBadRequest(w, "Invalid product_id")
+		return
+	}
+
+	weightedValuation, confidence, err := s.db.ComputeWeightedValuationForProduct(r.Context(), productID)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	totalAds, err := s.db.CountTotalAdsForProduct(r.Context(), productID)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	tradingRules, err := s.db.GetTradingRules(r.Context())
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	minProfitSEK := 0
+	if tradingRules.MinProfitSEK != nil {
+		minProfitSEK = *tradingRules.MinProfitSEK
+	}
+
+	minDiscount := 0
+	if tradingRules.MinDiscount != nil {
+		minDiscount = *tradingRules.MinDiscount
+	}
+
+	minConfidence := 80
+	if tradingRules.MinConfidence != nil {
+		minConfidence = *tradingRules.MinConfidence
+	}
+
+	minAds := 50
+	if tradingRules.MinAds != nil {
+		minAds = *tradingRules.MinAds
+	}
+
+	var threshold float64
+	var passesThreshold bool
+
+	if minDiscount > 0 {
+		threshold = float64(minProfitSEK) / (float64(minDiscount) / 100.0)
+		passesThreshold = float64(weightedValuation) > threshold
+	} else {
+		threshold = float64(minProfitSEK)
+		passesThreshold = weightedValuation > minProfitSEK
+	}
+
+	passesConfidence := confidence >= float64(minConfidence)
+	passesAds := totalAds >= minAds
+
+	shouldEnable := passesThreshold && passesConfidence && passesAds
+
+	type Response struct {
+		WeightedValuation int     `json:"weighted_valuation"`
+		Confidence        float64 `json:"confidence"`
+		TotalAds          int     `json:"total_ads"`
+		Threshold         float64 `json:"threshold"`
+		MinProfitSEK      int     `json:"min_profit_sek"`
+		MinDiscount       int     `json:"min_discount"`
+		MinConfidence     int     `json:"min_confidence"`
+		MinAds            int     `json:"min_ads"`
+		PassesThreshold   bool    `json:"passes_threshold"`
+		PassesConfidence  bool    `json:"passes_confidence"`
+		PassesAds         bool    `json:"passes_ads"`
+		ShouldEnable      bool    `json:"should_enable"`
+	}
+
+	api.WriteSuccess(w, Response{
+		WeightedValuation: weightedValuation,
+		Confidence:        confidence,
+		TotalAds:          totalAds,
+		Threshold:         threshold,
+		MinProfitSEK:      minProfitSEK,
+		MinDiscount:       minDiscount,
+		MinConfidence:     minConfidence,
+		MinAds:            minAds,
+		PassesThreshold:   passesThreshold,
+		PassesConfidence:  passesConfidence,
+		PassesAds:         passesAds,
+		ShouldEnable:      shouldEnable,
+	})
+}
+
 func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 	pathSuffix := r.URL.Path[len("/api/products/"):]
 
@@ -887,6 +991,10 @@ func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if payload.MinConfidence != nil && (*payload.MinConfidence < 0 || *payload.MinConfidence > 100) {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "min_confidence", Message: "must be between 0 and 100"}})
+			return
+		}
+		if payload.MinAds != nil && *payload.MinAds < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_ads", Message: "must be non-negative"}})
 			return
 		}
 		if err := s.db.SaveTradingRules(r.Context(), &payload); err != nil {
@@ -1790,6 +1898,17 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		logger.Printf("collectValuations: no inputs collected for product %d", req.ProductID)
+	}
+
+	shouldEnable, checkErr := s.db.ShouldAutoEnableProduct(ctx, req.ProductID)
+	if checkErr != nil {
+		logger.Printf("Failed to check auto-enable for product %d: %v", req.ProductID, checkErr)
+	} else if shouldEnable {
+		if err := s.db.SetProductEnabled(ctx, req.ProductID, true); err != nil {
+			logger.Printf("Failed to auto-enable product %d: %v", req.ProductID, err)
+		} else {
+			logger.Printf("Auto-enabled product: ID=%d (passed trading rules)", req.ProductID)
+		}
 	}
 
 	type resultItem struct {

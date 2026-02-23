@@ -512,9 +512,24 @@ func (p *Postgres) SaveProduct(ctx context.Context, product *models.Product) err
 	query := `
 		INSERT INTO products (brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id
+		RETURNING id, created_at
 	`
-	return p.db.QueryRowContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled).Scan(&product.ID)
+	var id int64
+	var createdAt time.Time
+	err := p.db.QueryRowContext(ctx, query,
+		product.Brand, product.Name, product.Category, product.ModelVariant,
+		product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled,
+	).Scan(&id, &createdAt)
+	if err != nil {
+		return err
+	}
+	product.ID = id
+	product.CreatedAt = &createdAt
+	return nil
+}
+
+func (p *Postgres) CreateProduct(ctx context.Context, product *models.Product) error {
+	return p.SaveProduct(ctx, product)
 }
 
 func (p *Postgres) CreateDisabledProduct(ctx context.Context, brand, name, category string) (*models.Product, error) {
@@ -547,6 +562,11 @@ func (p *Postgres) UpdateProduct(ctx context.Context, product *models.Product) e
 		WHERE id = $9
 	`
 	_, err := p.db.ExecContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled, product.ID)
+	return err
+}
+
+func (p *Postgres) SetProductEnabled(ctx context.Context, productID int64, enabled bool) error {
+	_, err := p.db.ExecContext(ctx, `UPDATE products SET enabled = $1 WHERE id = $2`, enabled, productID)
 	return err
 }
 
@@ -1359,23 +1379,139 @@ func (p *Postgres) ComputeWeightedValuationForProduct(ctx context.Context, produ
 	return weightedValuation, confidence, nil
 }
 
+func (p *Postgres) CountTotalAdsForProduct(ctx context.Context, productID int64) (int, error) {
+	query := `
+		SELECT DISTINCT ON (v.valuation_type_id)
+			v.metadata
+		FROM valuations v
+		JOIN valuation_types vt ON v.valuation_type_id = vt.id
+		WHERE v.product_id = $1 AND vt.enabled = true
+		ORDER BY v.valuation_type_id, v.created_at DESC
+	`
+	rows, err := p.db.QueryContext(ctx, query, productID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	totalAds := 0
+	for rows.Next() {
+		var metadata []byte
+		if err := rows.Scan(&metadata); err != nil {
+			return 0, err
+		}
+		if len(metadata) == 0 {
+			continue
+		}
+		var data map[string]interface{}
+		if err := json.Unmarshal(metadata, &data); err != nil {
+			continue
+		}
+
+		adsFromMetadata := 0
+
+		if tc, ok := data["total_count"].(float64); ok {
+			adsFromMetadata += int(tc)
+		} else if fc, ok := data["filtered_count"].(float64); ok {
+			adsFromMetadata += int(fc)
+		}
+
+		if breakdown, ok := data["breakdown"].(map[string]interface{}); ok {
+			for _, v := range breakdown {
+				if entry, ok := v.(map[string]interface{}); ok {
+					if count, ok := entry["count"].(float64); ok {
+						adsFromMetadata += int(count)
+					}
+				}
+			}
+		}
+
+		totalAds += adsFromMetadata
+	}
+	return totalAds, rows.Err()
+}
+
+func (p *Postgres) ShouldAutoEnableProduct(ctx context.Context, productID int64) (bool, error) {
+	weightedValuation, confidence, err := p.ComputeWeightedValuationForProduct(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+	if weightedValuation == 0 {
+		fmt.Printf("ShouldAutoEnableProduct(%d): weightedValuation=0, skipping\n", productID)
+		return false, nil
+	}
+
+	totalAds, err := p.CountTotalAdsForProduct(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+
+	tradingRules, err := p.GetTradingRules(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	minProfitSEK := 0
+	if tradingRules.MinProfitSEK != nil {
+		minProfitSEK = *tradingRules.MinProfitSEK
+	}
+
+	minDiscount := 0
+	if tradingRules.MinDiscount != nil {
+		minDiscount = *tradingRules.MinDiscount
+	}
+
+	minConfidence := 80
+	if tradingRules.MinConfidence != nil {
+		minConfidence = *tradingRules.MinConfidence
+	}
+
+	minAds := 50
+	if tradingRules.MinAds != nil {
+		minAds = *tradingRules.MinAds
+	}
+
+	var threshold float64
+	var passesThreshold bool
+
+	if minDiscount > 0 {
+		threshold = float64(minProfitSEK) / (float64(minDiscount) / 100.0)
+		passesThreshold = float64(weightedValuation) > threshold
+	} else {
+		threshold = float64(minProfitSEK)
+		passesThreshold = weightedValuation > minProfitSEK
+	}
+
+	passesConfidence := confidence >= float64(minConfidence)
+	passesAds := totalAds >= minAds
+
+	shouldEnable := passesThreshold && passesConfidence && passesAds
+
+	fmt.Printf("ShouldAutoEnableProduct(%d): weightedValuation=%d, confidence=%.2f, totalAds=%d, threshold=%.2f, passesThreshold=%v, minProfitSEK=%d, minDiscount=%d, minConfidence=%d, minAds=%d, passesConfidence=%v, passesAds=%v, shouldEnable=%v\n",
+		productID, weightedValuation, confidence, totalAds, threshold, passesThreshold, minProfitSEK, minDiscount, minConfidence, minAds, passesConfidence, passesAds, shouldEnable)
+
+	return shouldEnable, nil
+}
+
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
-	query := `SELECT id, min_profit_sek, min_discount, COALESCE(min_confidence, 80) FROM trading_rules LIMIT 1`
+	query := `SELECT id, min_profit_sek, min_discount, COALESCE(min_confidence, 80), COALESCE(min_ads, 50) FROM trading_rules LIMIT 1`
 	var rules models.Economics
-	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount, &rules.MinConfidence)
+	err := p.db.QueryRowContext(ctx, query).Scan(&rules.ID, &rules.MinProfitSEK, &rules.MinDiscount, &rules.MinConfidence, &rules.MinAds)
 	if err == sql.ErrNoRows {
 		fmt.Println("GetTradingRules: No rules found in database, using defaults")
 		defaultConfidence := 80
+		defaultAds := 50
 		return &models.Economics{
 			MinProfitSEK:  intPtr(0),
 			MinDiscount:   intPtr(0),
 			MinConfidence: &defaultConfidence,
+			MinAds:        &defaultAds,
 		}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v, min_confidence=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount, rules.MinConfidence)
+	fmt.Printf("GetTradingRules: id=%d, min_profit_sek=%v, min_discount=%v, min_confidence=%v, min_ads=%v\n", rules.ID, rules.MinProfitSEK, rules.MinDiscount, rules.MinConfidence, rules.MinAds)
 	return &rules, nil
 }
 
@@ -1387,6 +1523,7 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 	var minProfit interface{} = nil
 	var minDiscount interface{} = nil
 	var minConfidence interface{} = nil
+	var minAds interface{} = nil
 	if rules.MinProfitSEK != nil {
 		minProfit = *rules.MinProfitSEK
 	}
@@ -1396,9 +1533,12 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 	if rules.MinConfidence != nil {
 		minConfidence = *rules.MinConfidence
 	}
+	if rules.MinAds != nil {
+		minAds = *rules.MinAds
+	}
 
 	// Try update first
-	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2, min_confidence = $3`, minProfit, minDiscount, minConfidence)
+	res, err := p.db.ExecContext(ctx, `UPDATE trading_rules SET min_profit_sek = $1, min_discount = $2, min_confidence = $3, min_ads = $4`, minProfit, minDiscount, minConfidence, minAds)
 	if err != nil {
 		return err
 	}
@@ -1408,7 +1548,7 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 
 	// No rows updated -> insert a new row
 	var id int64
-	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount, min_confidence) VALUES ($1, $2, $3) RETURNING id`, minProfit, minDiscount, minConfidence).Scan(&id)
+	err = p.db.QueryRowContext(ctx, `INSERT INTO trading_rules (min_profit_sek, min_discount, min_confidence, min_ads) VALUES ($1, $2, $3, $4) RETURNING id`, minProfit, minDiscount, minConfidence, minAds).Scan(&id)
 	if err != nil {
 		return err
 	}

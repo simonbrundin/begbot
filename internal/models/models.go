@@ -106,6 +106,7 @@ type Economics struct {
 	MinProfitSEK  *int  `json:"min_profit_sek,omitempty" db:"min_profit_sek"`
 	MinDiscount   *int  `json:"min_discount,omitempty" db:"min_discount"`
 	MinConfidence *int  `json:"min_confidence,omitempty" db:"min_confidence"`
+	MinAds        *int  `json:"min_ads,omitempty" db:"min_ads"`
 }
 
 type TradedItemCandidate struct {
