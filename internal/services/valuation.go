@@ -189,6 +189,16 @@ func (s *ValuationService) Compile(ctx context.Context, inputs []ValuationInput)
 
 func (s *ValuationService) SaveValuations(ctx context.Context, productID string, inputs []ValuationInput) error {
 	var firstErr error
+
+	pid := int64(0)
+	if len(productID) > 0 {
+		parsed, err := strconv.ParseInt(productID, 10, 64)
+		if err == nil {
+			pid = parsed
+		}
+	}
+
+	anyValuationSaved := false
 	for _, input := range inputs {
 		// Skip if this valuation type is not enabled
 		if !valuationTypeEnabled[input.Type] {
@@ -198,14 +208,6 @@ func (s *ValuationService) SaveValuations(ctx context.Context, productID string,
 		metadataJSON, err := json.Marshal(input.Metadata)
 		if err != nil {
 			metadataJSON = []byte("{}")
-		}
-
-		pid := int64(0)
-		if len(productID) > 0 {
-			parsed, err := strconv.ParseInt(productID, 10, 64)
-			if err == nil {
-				pid = parsed
-			}
 		}
 
 		vid := s.getValuationTypeID(input.Type)
@@ -224,6 +226,21 @@ func (s *ValuationService) SaveValuations(ctx context.Context, productID string,
 			log.Printf("Failed to save valuation for method %s: %v", input.Type, err)
 			if firstErr == nil {
 				firstErr = err
+			}
+		} else {
+			anyValuationSaved = true
+		}
+	}
+
+	if pid > 0 && (anyValuationSaved || len(inputs) == 0) {
+		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, pid)
+		if checkErr != nil {
+			log.Printf("Failed to check auto-enable for product %d: %v", pid, checkErr)
+		} else if shouldEnable {
+			if err := s.database.SetProductEnabled(ctx, pid, true); err != nil {
+				log.Printf("Failed to auto-enable product %d: %v", pid, err)
+			} else {
+				log.Printf("Auto-enabled product: ID=%d (passed trading rules)", pid)
 			}
 		}
 	}

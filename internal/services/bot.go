@@ -67,6 +67,10 @@ func (s *BotService) SetSearchTermsOverride(terms []models.SearchTerm) {
 	s.searchTermsOverride = terms
 }
 
+func (s *BotService) ValuationService() *ValuationService {
+	return s.valuationService
+}
+
 func (s *BotService) log(level LogLevel, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	log.Printf("[%s] %s", level, message)
@@ -270,6 +274,10 @@ func ptrVal(p *int) int {
 	return *p
 }
 
+func ptrBool(b bool) *bool {
+	return &b
+}
+
 func (s *BotService) isNewLink(link string, newLinks []string) bool {
 	for _, l := range newLinks {
 		if l == link {
@@ -305,49 +313,106 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	// Log final shipping cost
 	s.log(LogLevelInfo, "Final shipping: cost=%d, insurance=%d", item.BuyShippingCost, item.BuyShippingInsurance)
 
-	validatedProduct, err := s.ValidateListing(ctx, ad)
+	validationResult, err := s.ValidateListing(ctx, ad)
 	if err != nil {
 		s.log(LogLevelError, "Failed to validate listing: %v", err)
 		return err
 	}
 
-	if validatedProduct == nil {
+	if validationResult == nil {
 		s.log(LogLevelWarning, "Listing validation failed - no matching product found for: %s", ad.Link)
 		return nil
 	}
 
-	s.log(LogLevelInfo, "Product identified: %s %s (%s)", productInfo.Manufacturer, productInfo.Model, productInfo.Category)
+	if validationResult.IsNewProduct {
+		s.log(LogLevelInfo, "New product detected: %s %s (%s) - collecting valuations before creation",
+			validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
 
-	item.ProductID = &validatedProduct.ID
+		valInputs, err := s.valuationService.CollectAll(ctx, "", *validationResult.ProductInfo)
+		if err != nil {
+			s.log(LogLevelWarning, "Failed to collect valuations for new product: %v", err)
+		}
+
+		if len(valInputs) == 0 {
+			s.log(LogLevelWarning, "No valuations collected for new product - skipping listing: %s", ad.Link)
+			return nil
+		}
+
+		output, err := s.valuationService.Compile(ctx, valInputs)
+		if err != nil {
+			s.log(LogLevelWarning, "Failed to compile valuations for new product: %v", err)
+			s.log(LogLevelWarning, "Skipping listing due to valuation failure: %s", ad.Link)
+			return nil
+		}
+
+		product := &models.Product{
+			Brand:    &validationResult.ProductInfo.Manufacturer,
+			Name:     &validationResult.ProductInfo.Model,
+			Category: &validationResult.ProductInfo.Category,
+		}
+		if err := s.database.CreateProduct(ctx, product); err != nil {
+			s.log(LogLevelError, "Failed to create product: %v", err)
+			return err
+		}
+
+		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, product.ID)
+		if checkErr != nil {
+			s.log(LogLevelWarning, "Failed to check auto-enable for new product %d: %v", product.ID, checkErr)
+		}
+
+		if !shouldEnable {
+			s.log(LogLevelWarning, "New product %s %s does not meet auto-enable criteria - deleting product and skipping listing",
+				validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model)
+			if delErr := s.database.DeleteProduct(ctx, product.ID); delErr != nil {
+				s.log(LogLevelWarning, "Failed to delete product: %v", delErr)
+			}
+			return nil
+		}
+
+		if err := s.database.SetProductEnabled(ctx, product.ID, true); err != nil {
+			s.log(LogLevelWarning, "Failed to enable new product %d: %v", product.ID, err)
+		} else {
+			s.log(LogLevelInfo, "Auto-enabled new product: ID=%d (passed trading rules)", product.ID)
+		}
+
+		if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", product.ID), valInputs); err != nil {
+			s.log(LogLevelWarning, "Failed to save valuations for new product: %v", err)
+		}
+
+		validationResult.Product = product
+		validationResult.ProductInfo.NewPrice = output.RecommendedPrice
+		s.log(LogLevelInfo, "Created enabled product: ID=%d, Name=%s", product.ID, *product.Name)
+	}
+
+	s.log(LogLevelInfo, "Product identified: %s %s (%s)", validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
+
+	item.ProductID = &validationResult.Product.ID
 	if item.SellPackagingCost == nil {
-		packagingCost := validatedProduct.SellPackagingCost
+		packagingCost := validationResult.Product.SellPackagingCost
 		item.SellPackagingCost = &packagingCost
 	}
 	if item.SellPostageCost == nil {
-		postageCost := validatedProduct.SellPostageCost
+		postageCost := validationResult.Product.SellPostageCost
 		item.SellPostageCost = &postageCost
 	}
 
-	candidate, err := s.evaluateItem(ctx, item, productInfo)
+	candidate, err := s.evaluateItem(ctx, item, validationResult.ProductInfo)
 	if err != nil {
 		s.log(LogLevelError, "Failed to evaluate item: %v", err)
 		return err
 	}
 
-	// Save listing for validated product
-	productID := validatedProduct.ID
+	productID := validationResult.Product.ID
 	price := item.BuyPrice
-	marketplaceID := int64(1) // Blocket
+	marketplaceID := int64(1)
 	now := time.Now()
 
-	// Collect all valuations from different methods
-	valInputs, err := s.valuationService.CollectAll(ctx, strconv.FormatInt(productID, 10), *productInfo)
+	valInputs, err := s.valuationService.CollectAll(ctx, strconv.FormatInt(productID, 10), *validationResult.ProductInfo)
 	if err != nil {
 		s.log(LogLevelWarning, "Failed to collect valuations: %v", err)
 		valInputs = nil
 	}
 
-	// Compile valuations into a final recommendation
 	var compiledValuation int
 	if len(valInputs) > 0 {
 		output, err := s.valuationService.Compile(ctx, valInputs)
@@ -386,9 +451,8 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		}
 	}
 
-	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", *validatedProduct.Name, item.BuyPrice, compiledValuation)
+	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", *validationResult.Product.Name, item.BuyPrice, compiledValuation)
 
-	// Save individual valuations to the database
 	if len(valInputs) > 0 {
 		productIDStr := fmt.Sprintf("%d", productID)
 		if err := s.valuationService.SaveValuations(ctx, productIDStr, valInputs); err != nil {
@@ -396,9 +460,8 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		}
 	}
 
-	// Check trading rules and send email if listing passes
 	go func() {
-		err := s.SendTradingRuleEmail(ctx, listing, validatedProduct)
+		err := s.SendTradingRuleEmail(ctx, listing, validationResult.Product)
 		if err != nil {
 			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
 		}
@@ -433,7 +496,13 @@ func (s *BotService) evaluateItem(ctx context.Context, item *models.TradedItem, 
 	}, nil
 }
 
-func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Product, error) {
+type ValidateListingResult struct {
+	Product      *models.Product
+	IsNewProduct bool
+	ProductInfo  *ProductInfo
+}
+
+func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*ValidateListingResult, error) {
 	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
 		s.log(LogLevelError, "Failed to extract product info: %v", err)
@@ -455,17 +524,13 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Pro
 	}
 
 	if len(products) == 0 {
-		s.log(LogLevelWarning, "Product NOT found in catalog: %s %s (%s) - creating disabled product",
+		s.log(LogLevelWarning, "Product NOT found in catalog: %s %s (%s) - caller will handle creation with valuations",
 			productInfo.Manufacturer, productInfo.Model, productInfo.Category)
-
-		product, createErr := s.database.CreateDisabledProduct(ctx, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
-		if createErr != nil {
-			s.log(LogLevelError, "Failed to create disabled product: %v", createErr)
-			return nil, createErr
-		}
-		s.log(LogLevelInfo, "Created disabled product: ID=%d, Name=%s, Category=%s",
-			product.ID, *product.Name, *product.Category)
-		return product, nil
+		return &ValidateListingResult{
+			Product:      nil,
+			IsNewProduct: true,
+			ProductInfo:  productInfo,
+		}, nil
 	}
 
 	s.log(LogLevelInfo, "Found %d candidate product(s) in catalog:", len(products))
@@ -495,7 +560,11 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*models.Pro
 	s.log(LogLevelInfo, "Product selected: ID=%d, Name=%s, Category=%s",
 		product.ID, *product.Name, *product.Category)
 
-	return product, nil
+	return &ValidateListingResult{
+		Product:      product,
+		IsNewProduct: false,
+		ProductInfo:  productInfo,
+	}, nil
 }
 
 func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product) error {

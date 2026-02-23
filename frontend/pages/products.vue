@@ -198,6 +198,12 @@
                 >
                   {{ collectingProducts.has(product.id) ? 'Uppdaterar...' : 'Uppdatera' }}
                 </button>
+                <button
+                  @click="checkAutoEnable(product.id)"
+                  class="text-blue-400 hover:text-blue-300 text-sm"
+                >
+                  Kontrollera
+                </button>
               </div>
             </td>
           </tr>
@@ -237,6 +243,56 @@
         </ul>
         <div class="flex justify-end mt-5">
           <button @click="collectLog = null" class="btn btn-secondary">Stäng</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug-modal för auto-enable villkor -->
+    <div v-if="autoEnableDebug" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div class="bg-slate-800 rounded-lg p-6 w-full max-w-md border border-slate-700">
+        <h2 class="text-lg font-bold text-slate-100 mb-4">Aktiveringsvillkor</h2>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-slate-400">Sammanvägd värdering:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.weighted_valuation }} kr</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">Säkerhet (%):</span>
+            <span :class="autoEnableDebug.passes_confidence ? 'text-emerald-400' : 'text-red-400'">{{ autoEnableDebug.confidence.toFixed(1) }}%</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">Antal annonser:</span>
+            <span :class="autoEnableDebug.passes_ads ? 'text-emerald-400' : 'text-red-400'">{{ autoEnableDebug.total_ads }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">Gränsvärde:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.threshold.toFixed(0) }} kr</span>
+          </div>
+          <hr class="border-slate-700 my-2">
+          <div class="flex justify-between">
+            <span class="text-slate-400">min_profit_sek:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.min_profit_sek }} kr</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">min_discount:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.min_discount }}%</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">min_confidence:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.min_confidence }}%</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-400">min_ads:</span>
+            <span class="text-slate-200">{{ autoEnableDebug.min_ads }}</span>
+          </div>
+          <hr class="border-slate-700 my-2">
+          <div class="flex justify-between font-medium">
+            <span class="text-slate-400">Aktiverad:</span>
+            <span :class="autoEnableDebug.should_enable ? 'text-emerald-400' : 'text-red-400'">{{ autoEnableDebug.should_enable ? 'JA' : 'NEJ' }}</span>
+          </div>
+        </div>
+        <div class="flex justify-end mt-5">
+          <button @click="autoEnableDebug = null" class="btn btn-secondary">Stäng</button>
         </div>
       </div>
     </div>
@@ -348,6 +404,20 @@ const collectLog = ref<{ loading: boolean; results: { type: string; value: numbe
 const showAddModal = ref(false)
 const editingProduct = ref<Product | null>(null)
 const deletingProduct = ref<Product | null>(null)
+const autoEnableDebug = ref<{
+  weighted_valuation: number
+  confidence: number
+  total_ads: number
+  threshold: number
+  min_profit_sek: number
+  min_discount: number
+  min_confidence: number
+  min_ads: number
+  passes_threshold: boolean
+  passes_confidence: boolean
+  passes_ads: boolean
+  should_enable: boolean
+} | null>(null)
 
 const page = ref(1)
 const pageSize = ref(20)
@@ -962,6 +1032,7 @@ const saveValuation = async (productId: number, typeId: number) => {
 const collectValuations = async (productId: number) => {
   collectingProducts.value = new Set([...collectingProducts.value, productId])
   collectLog.value = { loading: true, results: [] }
+  autoEnableDebug.value = null
   try {
     const res = await api.post<{ collected: number; results: { type: string; value: number; source_url?: string; error?: string }[] }>(
       '/valuations/collect',
@@ -977,6 +1048,17 @@ const collectValuations = async (productId: number) => {
     const next = new Set(collectingProducts.value)
     next.delete(productId)
     collectingProducts.value = next
+  }
+}
+
+const checkAutoEnable = async (productId: number) => {
+  autoEnableDebug.value = null
+  try {
+    const res = await api.get<any>(`/products/auto-enable-check?product_id=${productId}`)
+    autoEnableDebug.value = res
+  } catch (e) {
+    console.error('Failed to check auto-enable:', e)
+    showSaveStatus('error', 'Kunde inte hämta aktiveringsvillkor')
   }
 }
 

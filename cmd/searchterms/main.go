@@ -125,19 +125,69 @@ func runSearchTerms(ctx context.Context, svc *services.SearchTermService, postgr
 				continue
 			}
 
-			product, err := botSvc.ValidateListing(ctx, ad)
+			result, err := botSvc.ValidateListing(ctx, ad)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to validate listing: %v\n", err)
 				continue
 			}
-			if product == nil {
+			if result == nil {
 				skipped++
 				continue
 			}
 
+			if result.IsNewProduct {
+				productInfo := result.ProductInfo
+				valInputs, err := botSvc.ValuationService().CollectAll(ctx, "", *productInfo)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to collect valuations: %v\n", err)
+				}
+
+				if len(valInputs) == 0 {
+					fmt.Printf("No valuations collected for new product %s %s - skipping listing\n", productInfo.Manufacturer, productInfo.Model)
+					skipped++
+					continue
+				}
+
+				output, err := botSvc.ValuationService().Compile(ctx, valInputs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to compile valuations: %v\n", err)
+					skipped++
+					continue
+				}
+				_ = output
+
+				product := &models.Product{
+					Brand:    &productInfo.Manufacturer,
+					Name:     &productInfo.Model,
+					Category: &productInfo.Category,
+				}
+				if err := postgres.CreateProduct(ctx, product); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to create product: %v\n", err)
+					skipped++
+					continue
+				}
+
+				shouldEnable, checkErr := postgres.ShouldAutoEnableProduct(ctx, product.ID)
+				if checkErr != nil {
+					fmt.Fprintf(os.Stderr, "Failed to check auto-enable: %v\n", checkErr)
+				}
+
+				if !shouldEnable {
+					fmt.Printf("New product %s %s does not meet auto-enable criteria - skipping listing\n", productInfo.Manufacturer, productInfo.Model)
+					postgres.DeleteProduct(ctx, product.ID)
+					skipped++
+					continue
+				}
+
+				postgres.SetProductEnabled(ctx, product.ID, true)
+				botSvc.ValuationService().SaveValuations(ctx, fmt.Sprintf("%d", product.ID), valInputs)
+				fmt.Printf("Created enabled product: %s %s\n", productInfo.Manufacturer, productInfo.Model)
+				result.Product = product
+			}
+
 			price := int(ad.Price)
 			listing := &models.Listing{
-				ProductID:     &product.ID,
+				ProductID:     &result.Product.ID,
 				Link:          ad.Link,
 				Price:         &price,
 				Description:   &ad.AdText,
