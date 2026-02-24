@@ -87,6 +87,7 @@
             <th class="cursor-pointer hover:text-primary-300" @click="handleSort('brand')">Märke <span>{{ getSortIcon('brand') }}</span></th>
             <th class="cursor-pointer hover:text-primary-300" @click="handleSort('name')">Namn <span>{{ getSortIcon('name') }}</span></th>
             <th class="cursor-pointer hover:text-primary-300" @click="handleSort('category')">Kategori <span>{{ getSortIcon('category') }}</span></th>
+            <th>Blocketkategori</th>
             <th v-for="vt in enabledValuationTypes" :key="vt.id">{{ vt.name }}</th>
             <th class="cursor-pointer hover:text-primary-300" @click="handleSort('weighted')">Sammanvägd värdering <span>{{ getSortIcon('weighted') }}</span></th>
             <th class="cursor-pointer hover:text-primary-300" @click="handleSort('enabled')">Aktiverad <span>{{ getSortIcon('enabled') }}</span></th>
@@ -125,6 +126,20 @@
               </template>
             </td>
             <td>{{ product.category || '-' }}</td>
+            <td>
+              <template v-if="isEditingCell(product.id, 'blocket_category')">
+                <input
+                  v-model="editingValue"
+                  @keyup.enter="saveField(product.id, 'blocket_category')"
+                  @keyup.escape="cancelEditField"
+                  class="input input-sm w-40"
+                  placeholder="t.ex. 2.93.3217.39"
+                />
+              </template>
+              <template v-else>
+                <span @click="startEditField(product, 'blocket_category')" class="cursor-pointer hover:text-primary-300">{{ product.blocket_category_name || product.blocket_category || '-' }}</span>
+              </template>
+            </td>
             <template v-for="vt in enabledValuationTypes" :key="vt.id">
               <td class="text-sm" :class="{ 'opacity-40': !isTypeActiveForProduct(product.id, vt.id) }">
                 <!-- Inline active/inactive toggle badge -->
@@ -225,8 +240,8 @@
       <div class="bg-slate-800 rounded-lg p-6 w-full max-w-lg border border-slate-700">
         <h2 class="text-lg font-bold text-slate-100 mb-4">Uppdatera värderingar</h2>
         <div v-if="collectLog.loading" class="text-slate-400 text-sm">Samlar in värderingar...</div>
-        <ul v-else class="space-y-3">
-          <li v-for="r in collectLog.results" :key="r.type" class="text-sm">
+        <ul v-else-if="filteredCollectLogResults.length > 0" class="space-y-3">
+          <li v-for="r in filteredCollectLogResults" :key="r.type" class="text-sm">
             <div class="font-medium" :class="r.error ? 'text-slate-400' : 'text-slate-200'">{{ r.type }}</div>
             <div v-if="r.error" class="text-red-400 text-xs">{{ r.error }}</div>
             <template v-else>
@@ -239,7 +254,7 @@
                 </div>
             </template>
           </li>
-          <li v-if="collectLog.results.length === 0" class="text-slate-400 text-sm">Inga värderingar hittades.</li>
+          <li v-if="filteredCollectLogResults.length === 0" class="text-slate-400 text-sm">Inga värderingar hittades.</li>
         </ul>
         <div class="flex justify-end mt-5">
           <button @click="collectLog = null" class="btn btn-secondary">Stäng</button>
@@ -397,6 +412,15 @@ const valuationTypes = ref<ValuationType[]>([])
 const valuationConfigsByProduct = ref<Record<number, ProductValuationTypeConfig[]>>({})
 
 const enabledValuationTypes = computed(() => valuationTypes.value.filter(t => t.enabled !== false))
+
+const filteredCollectLogResults = computed(() => {
+  if (!collectLog.value?.results) return []
+  
+  // Filter out known disabled types by name
+  const disabledTypes = ['Nypris (LLM)', 'eBay/Marknadsplatser']
+  return collectLog.value.results.filter(r => !disabledTypes.includes(r.type))
+})
+
 const loading = ref(false)
 const collectingProducts = ref<Set<number>>(new Set())
 const collectingOutdated = ref(false)

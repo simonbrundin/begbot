@@ -3,6 +3,8 @@ export interface Product {
   brand: string | null
   name: string | null
   category: string | null
+  blocket_category: string | null
+  blocket_category_name: string | null
   model_variant: string | null
   sell_packaging_cost: number
   sell_postage_cost: number

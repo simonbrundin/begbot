@@ -6,16 +6,18 @@ import (
 )
 
 type Product struct {
-	ID                int64      `json:"id" db:"id"`
-	Brand             *string    `json:"brand,omitempty" db:"brand"`
-	Name              *string    `json:"name,omitempty" db:"name"`
-	Category          *string    `json:"category,omitempty" db:"category"`
-	ModelVariant      *string    `json:"model_variant,omitempty" db:"model_variant"`
-	SellPackagingCost int        `json:"sell_packaging_cost" db:"sell_packaging_cost"`
-	SellPostageCost   int        `json:"sell_postage_cost" db:"sell_postage_cost"`
-	NewPrice          *int       `json:"new_price,omitempty" db:"new_price"`
-	Enabled           *bool      `json:"enabled,omitempty" db:"enabled"`
-	CreatedAt         *time.Time `json:"created_at,omitempty" db:"created_at"`
+	ID                  int64      `json:"id" db:"id"`
+	Brand               *string    `json:"brand,omitempty" db:"brand"`
+	Name                *string    `json:"name,omitempty" db:"name"`
+	Category            *string    `json:"category,omitempty" db:"category"`
+	BlocketCategory     *string    `json:"blocket_category,omitempty" db:"blocket_category"`
+	BlocketCategoryName *string    `json:"blocket_category_name,omitempty" db:"blocket_category_name"`
+	ModelVariant        *string    `json:"model_variant,omitempty" db:"model_variant"`
+	SellPackagingCost   int        `json:"sell_packaging_cost" db:"sell_packaging_cost"`
+	SellPostageCost     int        `json:"sell_postage_cost" db:"sell_postage_cost"`
+	NewPrice            *int       `json:"new_price,omitempty" db:"new_price"`
+	Enabled             *bool      `json:"enabled,omitempty" db:"enabled"`
+	CreatedAt           *time.Time `json:"created_at,omitempty" db:"created_at"`
 }
 
 type TradedItem struct {
@@ -231,4 +233,13 @@ type ConversationWithDetails struct {
 	ListingPrice    *int   `json:"listing_price,omitempty"`
 	MarketplaceName string `json:"marketplace_name"`
 	PendingCount    int    `json:"pending_count"`
+}
+
+type BlocketCategory struct {
+	ID          int64      `json:"id" db:"id"`
+	BlocketID   string     `json:"blocket_id" db:"blocket_id"`
+	Name        string     `json:"name" db:"name"`
+	ParentID    *string    `json:"parent_id,omitempty" db:"parent_id"`
+	LLMCategory *string    `json:"llm_category,omitempty" db:"llm_category"`
+	CreatedAt   *time.Time `json:"created_at,omitempty" db:"created_at"`
 }

@@ -591,7 +591,19 @@ type BlocketAPIResponse struct {
 				Title       string `json:"title"`
 				Description string `json:"description"`
 				Price       int    `json:"price"`
-				Images      []struct {
+				Category    struct {
+					ID     int64  `json:"id"`
+					Value  string `json:"value"`
+					Parent struct {
+						ID     int64  `json:"id"`
+						Value  string `json:"value"`
+						Parent struct {
+							ID    int64  `json:"id"`
+							Value string `json:"value"`
+						} `json:"parent"`
+					} `json:"parent"`
+				} `json:"category"`
+				Images []struct {
 					URI         string `json:"uri"`
 					Width       int    `json:"width"`
 					Height      int    `json:"height"`
@@ -633,6 +645,7 @@ type BlocketAdDetails struct {
 	SellerPaysShipping  *bool
 	BuyNow              *bool
 	Images              []string
+	BlocketCategoryID   string
 }
 
 func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int64) (*BlocketAdDetails, error) {
@@ -711,6 +724,17 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 			adID, shippingPriceText, normalizedText, shippingCost, insuranceCost)
 	}
 
+	// Extract category ID in format "1.93.3217" (parent.parent.id)
+	cat := apiResp.LoaderData.ItemRecommerce.ItemData.Category
+	blocketCategoryID := ""
+	if cat.Parent.Parent.ID > 0 {
+		blocketCategoryID = fmt.Sprintf("1.%d.%d", cat.Parent.Parent.ID, cat.Parent.ID)
+	} else if cat.Parent.ID > 0 {
+		blocketCategoryID = fmt.Sprintf("1.%d", cat.Parent.ID)
+	}
+
+	log.Printf("[Blocket API] Ad %d: category=%s (id=%d)", adID, cat.Value, cat.ID)
+
 	return &BlocketAdDetails{
 		RawAd: RawAd{
 			Title:             apiResp.LoaderData.ItemRecommerce.ItemData.Title,
@@ -725,6 +749,7 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 		SellerPaysShipping:  &sellerPays,
 		BuyNow:              &buyNow,
 		Images:              images,
+		BlocketCategoryID:   blocketCategoryID,
 	}, nil
 }
 
