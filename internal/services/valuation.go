@@ -9,9 +9,10 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
-	// "strings" not used anymore
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,7 @@ type ValuationInput struct {
 	CollectedAt time.Time              `json:"collected_at"`
 	SoldCount   int                    `json:"sold_count,omitempty"`
 	DaysToSell  int                    `json:"days_to_sell,omitempty"`
+	Category    string                 `json:"category,omitempty"`
 }
 
 type ValuationOutput struct {
@@ -147,6 +149,7 @@ func (s *ValuationService) RegisterMethod(m ValuationMethod) {
 }
 
 func (s *ValuationService) CollectAll(ctx context.Context, productID string, productInfo ProductInfo) ([]ValuationInput, error) {
+	productInfo.ProductID = productID
 	inputs, _ := s.CollectAllWithErrors(ctx, productInfo)
 	return inputs, nil
 }
@@ -1015,8 +1018,23 @@ var blocketCache struct {
 	m  map[string]blocketCacheEntry
 }
 
+var blocketCategoryCache struct {
+	mu sync.RWMutex
+	m  map[string]string
+}
+
 func init() {
 	blocketCache.m = make(map[string]blocketCacheEntry)
+	blocketCategoryCache.m = make(map[string]string)
+}
+
+func ClearBlocketCaches() {
+	blocketCache.mu.Lock()
+	blocketCache.m = make(map[string]blocketCacheEntry)
+	blocketCache.mu.Unlock()
+	blocketCategoryCache.mu.Lock()
+	blocketCategoryCache.m = make(map[string]string)
+	blocketCategoryCache.mu.Unlock()
 }
 
 type blocketSearchResponse struct {
@@ -1024,13 +1042,160 @@ type blocketSearchResponse struct {
 }
 
 type blocketAd struct {
-	ID      string       `json:"id"`
+	ID      interface{}  `json:"id"`
 	Price   blocketPrice `json:"price"`
 	Heading string       `json:"heading"`
 }
 
+func (a blocketAd) GetID() string {
+	switch v := a.ID.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(v)
+	default:
+		return ""
+	}
+}
+
 type blocketPrice struct {
 	Amount int `json:"amount"`
+}
+
+type blocketAdAPIResponse struct {
+	LoaderData struct {
+		ItemRecommerce struct {
+			ItemData struct {
+				Category struct {
+					ID     int64  `json:"id"`
+					Value  string `json:"value"`
+					Parent struct {
+						ID     int64  `json:"id"`
+						Value  string `json:"value"`
+						Parent struct {
+							ID    int64  `json:"id"`
+							Value string `json:"value"`
+						} `json:"parent"`
+					} `json:"parent"`
+				} `json:"category"`
+			} `json:"itemData"`
+		} `json:"item-recommerce"`
+	} `json:"loaderData"`
+}
+
+func detectBlocketCategory(ctx context.Context, client *http.Client, baseURL string, queries []string) string {
+	if len(queries) == 0 {
+		return ""
+	}
+
+	cacheKey := "blocket-category:" + queries[0]
+	blocketCategoryCache.mu.RLock()
+	if cat, ok := blocketCategoryCache.m[cacheKey]; ok {
+		blocketCategoryCache.mu.RUnlock()
+		return cat
+	}
+	blocketCategoryCache.mu.RUnlock()
+
+	url := fmt.Sprintf("%s/v1/search?query=%s&limit=5", baseURL, url.QueryEscape(queries[0]))
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		log.Printf("Blocket: failed to create request for category detection: %v", err)
+		return ""
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Blocket: failed to fetch for category detection: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Blocket: category detection API returned status %d", resp.StatusCode)
+		return ""
+	}
+
+	var result blocketSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Blocket: failed to parse search response for category: %v", err)
+		return ""
+	}
+
+	if len(result.Docs) == 0 {
+		return ""
+	}
+
+	categoryCounts := make(map[string]int)
+
+	for _, ad := range result.Docs {
+		adID := ad.GetID()
+		if adID == "" {
+			continue
+		}
+
+		adIDInt, err := strconv.ParseInt(adID, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		adURL := fmt.Sprintf("%s/v1/ad/recommerce?id=%d", baseURL, adIDInt)
+		adReq, err := http.NewRequestWithContext(ctx, "GET", adURL, nil)
+		if err != nil {
+			continue
+		}
+		adReq.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		adReq.Header.Set("Accept", "application/json")
+
+		adResp, err := client.Do(adReq)
+		if err != nil {
+			continue
+		}
+		if adResp.StatusCode != http.StatusOK {
+			adResp.Body.Close()
+			continue
+		}
+
+		var adResult blocketAdAPIResponse
+		if err := json.NewDecoder(adResp.Body).Decode(&adResult); err != nil {
+			adResp.Body.Close()
+			continue
+		}
+		adResp.Body.Close()
+
+		cat := adResult.LoaderData.ItemRecommerce.ItemData.Category
+		var categoryID string
+		if cat.Parent.Parent.ID > 0 {
+			categoryID = fmt.Sprintf("1.%d.%d", cat.Parent.Parent.ID, cat.Parent.ID)
+		} else if cat.Parent.ID > 0 {
+			categoryID = fmt.Sprintf("1.%d", cat.Parent.ID)
+		}
+
+		if categoryID != "" {
+			categoryCounts[categoryID]++
+		}
+	}
+
+	var mostCommon string
+	var maxCount int
+	for cat, count := range categoryCounts {
+		if count > maxCount {
+			maxCount = count
+			mostCommon = cat
+		}
+	}
+
+	if mostCommon != "" {
+		log.Printf("Blocket: detected category %s (count: %d)", mostCommon, maxCount)
+		blocketCategoryCache.mu.Lock()
+		blocketCategoryCache.m[cacheKey] = mostCommon
+		blocketCategoryCache.mu.Unlock()
+	}
+
+	return mostCommon
 }
 
 func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo ProductInfo) (*ValuationInput, error) {
@@ -1075,8 +1240,53 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 
 	cacheTTL := 5 * time.Minute
 
+	// First: Try to get stored blocket_category from product in database
+	blockletCategory := ""
+	if m.svc.database != nil && productInfo.ProductID != "" {
+		log.Printf("DEBUG Blocket: ProductID=%s, trying to fetch from database", productInfo.ProductID)
+		productID, err := strconv.ParseInt(productInfo.ProductID, 10, 64)
+		if err == nil {
+			product, err := m.svc.database.GetProductByID(ctx, productID)
+			if err == nil && product != nil {
+				if product.BlocketCategory != nil && *product.BlocketCategory != "" {
+					blockletCategory = *product.BlocketCategory
+					log.Printf("DEBUG Blocket: Product %s has stored blocket_category=%s", productInfo.ProductID, blockletCategory)
+				} else {
+					log.Printf("DEBUG Blocket: Product %s has NO stored blocket_category (NULL or empty)", productInfo.ProductID)
+				}
+			} else {
+				log.Printf("DEBUG Blocket: Product %s not found or error: %v", productInfo.ProductID, err)
+			}
+		}
+	}
+
+	// Second: Fallback to database lookup based on LLM category if not found
+	if blockletCategory == "" && m.svc.database != nil && productInfo.Category != "" {
+		cat, err := m.svc.database.GetBlocketCategoryByLLMCategory(ctx, productInfo.Category)
+		if err != nil {
+			log.Printf("Blocket: failed to lookup category: %v", err)
+		} else if cat != nil {
+			blockletCategory = cat.BlocketID
+			log.Printf("Blocket: found category %s for LLM category %s", blockletCategory, productInfo.Category)
+		}
+	}
+
+	// Third: Fallback to dynamic detection if still not found
+	if blockletCategory == "" {
+		log.Printf("Blocket: category not found, using dynamic detection")
+		blockletCategory = detectBlocketCategory(ctx, client, baseURL, queries)
+	} else if m.svc.database != nil && productInfo.Category != "" {
+		log.Printf("Blocket: using category %s from database for product", blockletCategory)
+	}
+
 	for _, q := range queries {
 		cacheKey := "blocket-valuation:" + q
+		if blockletCategory != "" {
+			cacheKey = "blocket-valuation:" + q + ":" + blockletCategory
+		}
+
+		log.Printf("DEBUG Blocket: Query=%s, category=%s, cacheKey=%s", q, blockletCategory, cacheKey)
+
 		blocketCache.mu.RLock()
 		if e, ok := blocketCache.m[cacheKey]; ok {
 			if time.Since(e.Collected) < cacheTTL {
@@ -1106,7 +1316,7 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 		}
 		blocketCache.mu.RUnlock()
 
-		result, err := blocketSearch(ctx, client, baseURL, q)
+		result, err := blocketSearch(ctx, client, baseURL, q, blockletCategory)
 		if err != nil {
 			log.Printf("Blocket valuation for query %q failed: %v", q, err)
 			continue
@@ -1145,12 +1355,16 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 		}
 
 		searchURL := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", url.QueryEscape(q))
+		if blockletCategory != "" {
+			searchURL += "&product_category=" + blockletCategory
+		}
 
 		vi := ValuationInput{
 			Type:       m.Name(),
 			Value:      medianPrice,
 			Confidence: confidence,
 			SourceURL:  searchURL,
+			Category:   blockletCategory,
 			Metadata: map[string]interface{}{
 				"query":           q,
 				"total_count":     len(result.Docs),
@@ -1222,6 +1436,9 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 	breakdown := make(map[string]interface{})
 	for q, p := range prices {
 		srcURL := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", url.QueryEscape(q))
+		if blockletCategory != "" {
+			srcURL += "&product_category=" + blockletCategory
+		}
 		breakdown[q] = map[string]interface{}{
 			"price":      p,
 			"count":      counts[q],
@@ -1242,9 +1459,14 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 	return &vi, nil
 }
 
-func blocketSearch(ctx context.Context, client *http.Client, baseURL string, query string) (*blocketSearchResponse, error) {
-	url := fmt.Sprintf("%s/v1/search?query=%s", baseURL, url.QueryEscape(query))
-	log.Printf("Blocket API URL: %s", url)
+func blocketSearch(ctx context.Context, client *http.Client, baseURL string, query string, category string) (*blocketSearchResponse, error) {
+	// Use blocket.se web search with category parameter (supports filtering!)
+	// Use www prefix and + for spaces
+	url := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", strings.ReplaceAll(query, " ", "+"))
+	if category != "" {
+		url += "&product_category=" + category
+	}
+	log.Printf("Blocket web search URL: %s", url)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -1252,7 +1474,8 @@ func blocketSearch(ctx context.Context, client *http.Client, baseURL string, que
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1261,15 +1484,86 @@ func blocketSearch(ctx context.Context, client *http.Client, baseURL string, que
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("blocket API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("blocket returned status %d", resp.StatusCode)
 	}
 
-	var result blocketSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	return &result, nil
+	// Debug: log first 500 chars of response
+	log.Printf("Blocket response (first 500 chars): %s", string(body[:min(500, len(body))]))
+
+	// Parse HTML to get ads
+	ads, err := parseBlocketSearchHTML(body)
+	if err != nil {
+		log.Printf("Blocket: HTML parsing failed: %v", err)
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	log.Printf("Blocket: found %d ads for query=%s with category=%s", len(ads), query, category)
+
+	return &blocketSearchResponse{Docs: ads}, nil
+}
+
+func parseBlocketSearchHTML(body []byte) ([]blocketAd, error) {
+	// Parse JSON-LD for basic info - similar to marketplace.go
+	re := regexp.MustCompile(`<script[^>]*type="application/ld\+json"[^>]*id="seoStructuredData"[^>]*>([^<]+)</script>`)
+	matches := re.FindSubmatch(body)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("no JSON-LD found")
+	}
+
+	jsonStr := string(matches[1])
+	// Unescape HTML entities
+	jsonStr = strings.ReplaceAll(jsonStr, `\&quot;`, `"`)
+	jsonStr = strings.ReplaceAll(jsonStr, `\&amp;`, `&`)
+	jsonStr = strings.ReplaceAll(jsonStr, `\&lt;`, `<`)
+	jsonStr = strings.ReplaceAll(jsonStr, `\&gt;`, `>`)
+
+	var structuredData struct {
+		MainEntity struct {
+			ItemListElement []struct {
+				Item struct {
+					Name   string `json:"name"`
+					ID     string `json:"@id"`
+					URL    string `json:"url"`
+					Offers struct {
+						Price string `json:"price"`
+					} `json:"offers"`
+				} `json:"item"`
+			} `json:"itemListElement"`
+		} `json:"mainEntity"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &structuredData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON-LD: %w", err)
+	}
+
+	var ads []blocketAd
+	for _, elem := range structuredData.MainEntity.ItemListElement {
+		item := elem.Item
+		if item.Offers.Price != "" {
+			price, err := strconv.ParseFloat(item.Offers.Price, 64)
+			if err == nil && price > 0 {
+				ad := blocketAd{
+					Heading: item.Name,
+					Price:   blocketPrice{Amount: int(price)},
+				}
+				// Extract ID from URL
+				if item.URL != "" {
+					reID := regexp.MustCompile(`/item/(\d+)`)
+					if m := reID.FindStringSubmatch(item.URL); len(m) > 1 {
+						ad.ID = m[1]
+					}
+				}
+				ads = append(ads, ad)
+			}
+		}
+	}
+
+	return ads, nil
 }
 
 func calculateQuartiles(prices []int) (float64, float64, float64) {

@@ -379,6 +379,10 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 			s.log(LogLevelWarning, "Failed to save valuations for new product: %v", err)
 		}
 
+		if err := s.saveBlocketCategoryFromValuations(ctx, product, valInputs); err != nil {
+			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", product.ID, err)
+		}
+
 		validationResult.Product = product
 		validationResult.ProductInfo.NewPrice = output.RecommendedPrice
 		s.log(LogLevelInfo, "Created enabled product: ID=%d, Name=%s", product.ID, *product.Name)
@@ -421,6 +425,10 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 			compiledValuation = candidate.EstimatedSell
 		} else {
 			compiledValuation = int(output.RecommendedPrice)
+		}
+
+		if err := s.saveBlocketCategoryFromValuations(ctx, validationResult.Product, valInputs); err != nil {
+			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", productID, err)
 		}
 	} else {
 		compiledValuation = candidate.EstimatedSell
@@ -471,6 +479,20 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		s.log(LogLevelInfo, "RECOMMENDATION: Buy %s for %d SEK (profit: %d SEK)", item.SourceLink, candidate.TotalCost, candidate.EstimatedSell-candidate.TotalCost)
 	}
 
+	return nil
+}
+
+func (s *BotService) saveBlocketCategoryFromValuations(ctx context.Context, product *models.Product, valInputs []ValuationInput) error {
+	for _, input := range valInputs {
+		if input.Type == "Blocket" && input.Category != "" {
+			product.BlocketCategory = &input.Category
+			if err := s.database.UpdateProduct(ctx, product); err != nil {
+				return err
+			}
+			s.log(LogLevelInfo, "Saved Blocket category %s for product ID=%d", input.Category, product.ID)
+			break
+		}
+	}
 	return nil
 }
 

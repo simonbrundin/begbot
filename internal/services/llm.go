@@ -47,6 +47,7 @@ type ProductInfo struct {
 	ShippingCost float64
 	AdText       string
 	NewPrice     float64
+	ProductID    string
 }
 
 func (s *LLMService) ExtractProductInfo(ctx context.Context, title, adText, link string) (*ProductInfo, error) {

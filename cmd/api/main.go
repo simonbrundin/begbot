@@ -523,8 +523,10 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 		query = weightedQuery + fmt.Sprintf(`
 			SELECT p.id, p.brand, p.name, p.category, p.model_variant, 
 			       p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at,
+			       p.blocket_category, bc.name as blocket_category_name,
 			       pv.weighted_valuation
 			FROM products p
+			LEFT JOIN blocket_categories bc ON bc.blocket_id = p.blocket_category
 			LEFT JOIN product_valuations pv ON pv.product_id = p.id
 			%s
 			ORDER BY p.created_at DESC
@@ -535,8 +537,10 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 		// Simple query without weighted valuation
 		query = fmt.Sprintf(`
 			SELECT p.id, p.brand, p.name, p.category, p.model_variant, 
-			       p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at
+			       p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at,
+			       p.blocket_category, bc.name as blocket_category_name
 			FROM products p
+			LEFT JOIN blocket_categories bc ON bc.blocket_id = p.blocket_category
 			%s
 			ORDER BY p.created_at DESC
 			LIMIT $%d OFFSET $%d
@@ -559,7 +563,7 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var p models.Product
-		var brand, name, categoryVal, modelVariant sql.NullString
+		var brand, name, categoryVal, modelVariant, blocketCategory, blocketCategoryName sql.NullString
 		var sellPackagingCost, sellPostageCost int
 		var newPrice sql.NullInt64
 		var enabled sql.NullBool
@@ -578,6 +582,8 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 				&newPrice,
 				&enabled,
 				&createdAt,
+				&blocketCategory,
+				&blocketCategoryName,
 				&weightedVal,
 			); err != nil {
 				api.WriteServerError(w, err.Error())
@@ -595,6 +601,8 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 				&newPrice,
 				&enabled,
 				&createdAt,
+				&blocketCategory,
+				&blocketCategoryName,
 			); err != nil {
 				api.WriteServerError(w, err.Error())
 				return
@@ -612,6 +620,12 @@ func (s *Server) getProducts(w http.ResponseWriter, r *http.Request) {
 		}
 		if modelVariant.Valid {
 			p.ModelVariant = &modelVariant.String
+		}
+		if blocketCategory.Valid {
+			p.BlocketCategory = &blocketCategory.String
+		}
+		if blocketCategoryName.Valid {
+			p.BlocketCategoryName = &blocketCategoryName.String
 		}
 		p.SellPackagingCost = sellPackagingCost
 		p.SellPostageCost = sellPostageCost
@@ -900,6 +914,9 @@ func (s *Server) productItemHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if inputProduct.Enabled != nil {
 			existingProduct.Enabled = inputProduct.Enabled
+		}
+		if inputProduct.BlocketCategory != nil {
+			existingProduct.BlocketCategory = inputProduct.BlocketCategory
 		}
 
 		if err := s.db.UpdateProduct(r.Context(), existingProduct); err != nil {
@@ -1867,11 +1884,17 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 		productInfo.NewPrice = float64(*product.NewPrice)
 	}
 
+	productInfo.ProductID = fmt.Sprintf("%d", req.ProductID)
+
 	if s.valuationService == nil {
 		logger.Printf("Error: valuation service not initialized")
 		api.WriteServerError(w, "Valuation service not available")
 		return
 	}
+
+	// DEBUG: Log what productInfo we're sending to valuation service
+	logger.Printf("DEBUG collectValuations: ProductID=%s, Manufacturer=%s, Model=%s, Category=%s",
+		productInfo.ProductID, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
 
 	inputs, collectResults := s.valuationService.CollectAllWithErrors(ctx, productInfo)
 
@@ -1946,6 +1969,7 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 					}
 
 					// Add each breakdown entry as its own result (e.g. brand+model and model-only)
+					var totalCount int
 					for _, q := range orderedKeys {
 						entry := resultItem{Type: fmt.Sprintf("Tradera (%s)", q)}
 						if entryRaw, ok := bdMap[q]; ok {
@@ -1960,8 +1984,10 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 								// count may be float64 (from JSON decode) or int
 								if cf, ok := eMap["count"].(float64); ok {
 									entry.Count = int(cf)
+									totalCount += int(cf)
 								} else if ci, ok := eMap["count"].(int); ok {
 									entry.Count = ci
+									totalCount += ci
 								}
 								if src, ok := eMap["source_url"].(string); ok {
 									entry.SourceURL = src
@@ -1982,7 +2008,7 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 					}
 
 					// Also add the combined Tradera result (weighted by counts) as a summary entry
-					summary := resultItem{Type: "Tradera (sammanvägd)", Value: r.Input.Value, SourceURL: r.Input.SourceURL}
+					summary := resultItem{Type: "Tradera (sammanvägd)", Value: r.Input.Value, Count: totalCount}
 					results = append(results, summary)
 					continue
 				}

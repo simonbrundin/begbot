@@ -557,11 +557,11 @@ func (p *Postgres) CreateDisabledProduct(ctx context.Context, brand, name, categ
 func (p *Postgres) UpdateProduct(ctx context.Context, product *models.Product) error {
 	query := `
 		UPDATE products 
-		SET brand = $1, name = $2, category = $3, model_variant = $4, 
-		    sell_packaging_cost = $5, sell_postage_cost = $6, new_price = $7, enabled = $8
-		WHERE id = $9
+		SET brand = $1, name = $2, category = $3, blocket_category = $4, model_variant = $5, 
+		    sell_packaging_cost = $6, sell_postage_cost = $7, new_price = $8, enabled = $9
+		WHERE id = $10
 	`
-	_, err := p.db.ExecContext(ctx, query, product.Brand, product.Name, product.Category, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled, product.ID)
+	_, err := p.db.ExecContext(ctx, query, product.Brand, product.Name, product.Category, product.BlocketCategory, product.ModelVariant, product.SellPackagingCost, product.SellPostageCost, product.NewPrice, product.Enabled, product.ID)
 	return err
 }
 
@@ -587,12 +587,12 @@ func (p *Postgres) DeleteProduct(ctx context.Context, id int64) error {
 
 func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*models.Product, error) {
 	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		SELECT id, brand, name, category, blocket_category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE brand = $1 AND name = $2
 	`
 	var product models.Product
 	err := p.db.QueryRowContext(ctx, query, brand, name).Scan(
-		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+		&product.ID, &product.Brand, &product.Name, &product.Category, &product.BlocketCategory, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -605,12 +605,12 @@ func (p *Postgres) GetProductByName(ctx context.Context, brand, name string) (*m
 
 func (p *Postgres) GetProductByID(ctx context.Context, id int64) (*models.Product, error) {
 	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		SELECT id, brand, name, category, blocket_category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE id = $1
 	`
 	var product models.Product
 	err := p.db.QueryRowContext(ctx, query, id).Scan(
-		&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+		&product.ID, &product.Brand, &product.Name, &product.Category, &product.BlocketCategory, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -640,7 +640,7 @@ func (p *Postgres) FindProducts(ctx context.Context, brand, name, category strin
 	log.Printf("[FindProducts] Searching for: brand=%q, name=%q, category=%q", brandLower, nameLower, categoryLower)
 
 	query := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		SELECT id, brand, name, category, blocket_category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE LOWER(brand) = $1 AND LOWER(name) = $2 AND LOWER(category) = $3
 	`
 	rows, err := p.db.QueryContext(ctx, query, brandLower, nameLower, categoryLower)
@@ -653,7 +653,7 @@ func (p *Postgres) FindProducts(ctx context.Context, brand, name, category strin
 	for rows.Next() {
 		var product models.Product
 		if err := rows.Scan(
-			&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+			&product.ID, &product.Brand, &product.Name, &product.Category, &product.BlocketCategory, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -671,7 +671,7 @@ func (p *Postgres) FindProducts(ctx context.Context, brand, name, category strin
 	log.Printf("[FindProducts] Exact match not found, trying fallback by brand+name...")
 
 	fallbackQuery := `
-		SELECT id, brand, name, category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
+		SELECT id, brand, name, category, blocket_category, model_variant, sell_packaging_cost, sell_postage_cost, new_price, enabled, created_at
 		FROM products WHERE LOWER(brand) = $1 AND LOWER(name) = $2
 	`
 	rows, err = p.db.QueryContext(ctx, fallbackQuery, brandLower, nameLower)
@@ -684,7 +684,7 @@ func (p *Postgres) FindProducts(ctx context.Context, brand, name, category strin
 	for rows.Next() {
 		var product models.Product
 		if err := rows.Scan(
-			&product.ID, &product.Brand, &product.Name, &product.Category, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+			&product.ID, &product.Brand, &product.Name, &product.Category, &product.BlocketCategory, &product.ModelVariant, &product.SellPackagingCost, &product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -724,6 +724,23 @@ func (p *Postgres) GetOrCreateProduct(ctx context.Context, brand, name, category
 		return nil, err
 	}
 	return &newProduct, nil
+}
+
+func (p *Postgres) GetBlocketCategoryByLLMCategory(ctx context.Context, llmCategory string) (*models.BlocketCategory, error) {
+	query := `SELECT id, blocket_id, name, parent_id, llm_category, created_at 
+		FROM blocket_categories WHERE llm_category = $1 LIMIT 1`
+
+	var cat models.BlocketCategory
+	err := p.db.QueryRowContext(ctx, query, llmCategory).Scan(
+		&cat.ID, &cat.BlocketID, &cat.Name, &cat.ParentID, &cat.LLMCategory, &cat.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cat, nil
 }
 
 func (p *Postgres) CalculateProfit(item *models.TradedItem) int {
