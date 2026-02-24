@@ -1,22 +1,47 @@
-# Agent OS Standards Index
-# This file indexes all standards in your project
+backend:
+  api:
+    description: API endpoint design principles and conventions
+  migrations:
+    description: Database migration patterns and best practices
+  models:
+    description: Database model design principles
+  queries:
+    description: SQL query optimization and safety
+  services:
+    description: Service dependency injection and composition patterns
+  configuration:
+    description: Configuration loading from environment variables
+  database-layer:
+    description: Database connection setup and pool configuration
 
-standards:
-  - name: configuration-structure
-    path: global/configuration-structure.md
-    description: Nested config structs, time.Duration timeouts
-  - name: currency-storage
-    path: database/currency-storage.md
-    description: Store monetary values as integers (SEK öre)
-  - name: email-sending
-    path: backend/email-sending.md
-    description: Use net/smtp for SMTP, StartTLS pattern
-  - name: llm-service-functions
-    path: backend/llm-service-functions.md
-    description: One LLM function per task, Action+Entity naming
-  - name: tech-stack
-    path: tech-stack.md
-    description: Technical stack and conventions
-  - name: swedish-text
-    path: frontend/swedish-text.md
-    description: All frontend text should be in Swedish
+frontend:
+  accessibility:
+    description: Accessibility standards for UI components
+  components:
+    description: Vue component conventions
+  css:
+    description: CSS and styling standards
+  responsive:
+    description: Responsive design patterns
+  api-composable:
+    description: useApi composable for API calls
+
+global:
+  coding-style:
+    description: General coding style guidelines
+  commenting:
+    description: Code commenting standards
+  conventions:
+    description: Naming and structural conventions
+  error-handling:
+    description: Error handling patterns
+  tech-stack:
+    description: Technology stack overview
+  validation:
+    description: Input validation standards
+
+testing:
+  test-writing:
+    description: Test writing guidelines
+  conventions:
+    description: Testing conventions and patterns
