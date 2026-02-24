@@ -31,9 +31,12 @@
             <tr>
               <th>Startad</th>
               <th>Status</th>
-              <th>Annonser hittade</th>
+              <th>Hittades</th>
+              <th>Nya annonser</th>
+              <th>Nya produkter</th>
+              <th>Sparade produkter</th>
               <th>Sparade annonser</th>
-              <th>Bra köp</th>
+              <th>Mejlade annonser</th>
               <th>Felmeddelande</th>
             </tr>
           </thead>
@@ -49,13 +52,28 @@
               </td>
               <td>{{ run.total_ads_found }}</td>
               <td>
+                <span :class="run.new_ads > 0 ? 'text-blue-400' : 'text-slate-400'">
+                  {{ run.new_ads }}
+                </span>
+              </td>
+              <td>
+                <span :class="run.new_products > 0 ? 'text-purple-400' : 'text-slate-400'">
+                  {{ run.new_products }}
+                </span>
+              </td>
+              <td>
+                <span :class="run.saved_products > 0 ? 'text-emerald-400' : 'text-slate-400'">
+                  {{ run.saved_products }}
+                </span>
+              </td>
+              <td>
                 <span :class="run.total_listings_saved > 0 ? 'text-emerald-400' : 'text-slate-400'">
                   {{ run.total_listings_saved }}
                 </span>
               </td>
               <td>
-                <span :class="run.total_good_buys > 0 ? 'text-emerald-400' : 'text-slate-400'">
-                  {{ run.total_good_buys }}
+                <span :class="run.emailed_ads > 0 ? 'text-yellow-400' : 'text-slate-400'">
+                  {{ run.emailed_ads }}
                 </span>
               </td>
               <td class="text-sm text-red-400">

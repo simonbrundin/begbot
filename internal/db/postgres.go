@@ -118,43 +118,44 @@ func (p *Postgres) Migrate() error {
 			min_discount SMALLINT,
 			min_confidence SMALLINT DEFAULT 80
 		)`,
-		`CREATE TABLE IF NOT EXISTS traded_items (
-			id SERIAL PRIMARY KEY,
-			product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
-			storage SMALLINT,
-			color_id INTEGER REFERENCES colors(id),
-			buy_price INTEGER,
-			buy_shipping_cost INTEGER DEFAULT 0,
-			buy_shipping_insurance INTEGER DEFAULT 0,
-			buy_transaction_id INTEGER REFERENCES transactions(id),
-			buy_date TIMESTAMPTZ,
-			sell_price INTEGER,
-			sell_packaging_cost INTEGER DEFAULT 0,
-			sell_postage_cost INTEGER DEFAULT 0,
-			sell_shipping_collected INTEGER DEFAULT 0,
-			sell_transaction_id INTEGER REFERENCES transactions(id),
-			sell_date TIMESTAMPTZ,
-			status_id SMALLINT REFERENCES trade_statuses(id) DEFAULT 1,
-			source_link TEXT,
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL
-		)`,
 		`CREATE TABLE IF NOT EXISTS listings (
-			id SERIAL PRIMARY KEY,
-			product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
-			price INTEGER,
-			link TEXT,
-			condition_id SMALLINT REFERENCES conditions(id),
-			shipping_cost SMALLINT,
-			title TEXT,
-			description TEXT,
-			marketplace_id SMALLINT REFERENCES marketplaces(id),
-			status TEXT DEFAULT 'draft',
-			publication_date TIMESTAMPTZ,
-			sold_date TIMESTAMPTZ,
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			is_my_listing BOOLEAN DEFAULT FALSE
-		)`,
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+            price INTEGER,
+            link TEXT,
+            condition_id SMALLINT REFERENCES conditions(id),
+            shipping_cost SMALLINT,
+            title TEXT,
+            description TEXT,
+            marketplace_id SMALLINT REFERENCES marketplaces(id),
+            status TEXT DEFAULT 'draft',
+            publication_date TIMESTAMPTZ,
+            sold_date TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            is_my_listing BOOLEAN DEFAULT FALSE
+        )`,
+		`ALTER TABLE listings ADD COLUMN IF NOT EXISTS title TEXT`,
+		`CREATE TABLE IF NOT EXISTS traded_items (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+            storage SMALLINT,
+            color_id INTEGER REFERENCES colors(id),
+            buy_price INTEGER,
+            buy_shipping_cost INTEGER DEFAULT 0,
+            buy_shipping_insurance INTEGER DEFAULT 0,
+            buy_transaction_id INTEGER REFERENCES transactions(id),
+            buy_date TIMESTAMPTZ,
+            sell_price INTEGER,
+            sell_packaging_cost INTEGER DEFAULT 0,
+            sell_postage_cost INTEGER DEFAULT 0,
+            sell_shipping_collected INTEGER DEFAULT 0,
+            sell_transaction_id INTEGER REFERENCES transactions(id),
+            sell_date TIMESTAMPTZ,
+            status_id SMALLINT REFERENCES trade_statuses(id) DEFAULT 1,
+            source_link TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL
+        )`,
 		`ALTER TABLE listings ADD COLUMN IF NOT EXISTS title TEXT`,
 		`CREATE TABLE IF NOT EXISTS image_links (
 			id SERIAL PRIMARY KEY,
@@ -233,12 +234,20 @@ func (p *Postgres) Migrate() error {
 			completed_at TIMESTAMPTZ,
 			status VARCHAR(20) NOT NULL DEFAULT 'running',
 			total_ads_found INTEGER DEFAULT 0,
+			new_ads INTEGER DEFAULT 0,
+			new_products INTEGER DEFAULT 0,
+			saved_products INTEGER DEFAULT 0,
 			total_listings_saved INTEGER DEFAULT 0,
+			emailed_ads INTEGER DEFAULT 0,
 			error_message TEXT,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_started_at ON scraping_runs(started_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_scraping_runs_status ON scraping_runs(status)`,
+		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS new_ads INTEGER DEFAULT 0`,
+		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS new_products INTEGER DEFAULT 0`,
+		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS saved_products INTEGER DEFAULT 0`,
+		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS emailed_ads INTEGER DEFAULT 0`,
 		`CREATE TABLE IF NOT EXISTS cron_jobs (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -1726,30 +1735,30 @@ func (p *Postgres) GetPotentialListings(ctx context.Context, limit, offset int) 
 
 func (p *Postgres) SaveScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
 	query := `
-		INSERT INTO scraping_runs (started_at, completed_at, status, total_ads_found, total_listings_saved, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO scraping_runs (started_at, completed_at, status, total_ads_found, new_ads, new_products, saved_products, total_listings_saved, emailed_ads, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at
 	`
 	return p.db.QueryRowContext(ctx, query,
-		run.StartedAt, run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage,
+		run.StartedAt, run.CompletedAt, run.Status, run.TotalAdsFound, run.NewAds, run.NewProducts, run.SavedProducts, run.TotalListingsSaved, run.EmailedAds, run.ErrorMessage,
 	).Scan(&run.ID, &run.CreatedAt)
 }
 
 func (p *Postgres) UpdateScrapingRun(ctx context.Context, run *models.ScrapingRun) error {
 	query := `
 		UPDATE scraping_runs 
-		SET completed_at = $1, status = $2, total_ads_found = $3, total_listings_saved = $4, error_message = $5
-		WHERE id = $6
+		SET completed_at = $1, status = $2, total_ads_found = $3, new_ads = $4, new_products = $5, saved_products = $6, total_listings_saved = $7, emailed_ads = $8, error_message = $9
+		WHERE id = $10
 	`
 	_, err := p.db.ExecContext(ctx, query,
-		run.CompletedAt, run.Status, run.TotalAdsFound, run.TotalListingsSaved, run.ErrorMessage, run.ID,
+		run.CompletedAt, run.Status, run.TotalAdsFound, run.NewAds, run.NewProducts, run.SavedProducts, run.TotalListingsSaved, run.EmailedAds, run.ErrorMessage, run.ID,
 	)
 	return err
 }
 
 func (p *Postgres) GetScrapingRuns(ctx context.Context, limit, offset int) ([]models.ScrapingRun, error) {
 	query := `
-		SELECT id, started_at, completed_at, status, total_ads_found, total_listings_saved, total_good_buys, error_message, created_at
+		SELECT id, started_at, completed_at, status, total_ads_found, new_ads, new_products, saved_products, total_listings_saved, emailed_ads, total_good_buys, error_message, created_at
 		FROM scraping_runs
 		ORDER BY started_at DESC
 		LIMIT $1 OFFSET $2
@@ -1763,7 +1772,7 @@ func (p *Postgres) GetScrapingRuns(ctx context.Context, limit, offset int) ([]mo
 	var runs []models.ScrapingRun
 	for rows.Next() {
 		var run models.ScrapingRun
-		if err := rows.Scan(&run.ID, &run.StartedAt, &run.CompletedAt, &run.Status, &run.TotalAdsFound, &run.TotalListingsSaved, &run.TotalGoodBuys, &run.ErrorMessage, &run.CreatedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.StartedAt, &run.CompletedAt, &run.Status, &run.TotalAdsFound, &run.NewAds, &run.NewProducts, &run.SavedProducts, &run.TotalListingsSaved, &run.EmailedAds, &run.TotalGoodBuys, &run.ErrorMessage, &run.CreatedAt); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
