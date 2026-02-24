@@ -200,7 +200,11 @@ type ScrapingRun struct {
 	CompletedAt        *time.Time `json:"completed_at,omitempty" db:"completed_at"`
 	Status             string     `json:"status" db:"status"`
 	TotalAdsFound      int        `json:"total_ads_found" db:"total_ads_found"`
+	NewAds             int        `json:"new_ads" db:"new_ads"`
+	NewProducts        int        `json:"new_products" db:"new_products"`
+	SavedProducts      int        `json:"saved_products" db:"saved_products"`
 	TotalListingsSaved int        `json:"total_listings_saved" db:"total_listings_saved"`
+	EmailedAds         int        `json:"emailed_ads" db:"emailed_ads"`
 	TotalGoodBuys      int        `json:"total_good_buys" db:"total_good_buys"`
 	ErrorMessage       *string    `json:"error_message,omitempty" db:"error_message"`
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`

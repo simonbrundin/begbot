@@ -133,7 +133,11 @@ export interface ScrapingRun {
   completed_at: string | null
   status: string
   total_ads_found: number
+  new_ads: number
+  new_products: number
+  saved_products: number
   total_listings_saved: number
+  emailed_ads: number
   total_good_buys: number
   error_message: string | null
   created_at: string
