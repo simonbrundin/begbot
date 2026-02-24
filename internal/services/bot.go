@@ -37,6 +37,14 @@ type BotService struct {
 	jobID               string
 	scrapingRunID       int64
 	searchTermsOverride []models.SearchTerm
+	newProductsCount    int
+	emailedAdsCount     int
+}
+
+type ProcessAdResult struct {
+	Saved      bool
+	NewProduct bool
+	EmailSent  bool
 }
 
 func NewBotService(cfg *config.Config, marketplaceService *MarketplaceService, cacheService *CacheService, llmService *LLMService, valuationService *ValuationService, database *db.Postgres) *BotService {
@@ -96,10 +104,58 @@ func (s *BotService) Run() error {
 		s.scrapingRunID = scrapingRun.ID
 	}
 
+	runStatus := "completed"
+	var errorMessage *string
+
+	totalAdsFound := 0
+	totalListingsSaved := 0
+	totalNewAds := 0
+
+	defer func() {
+		if s.scrapingRunID > 0 {
+			now := time.Now()
+			run := &models.ScrapingRun{
+				ID:                 s.scrapingRunID,
+				CompletedAt:        &now,
+				Status:             runStatus,
+				TotalAdsFound:      totalAdsFound,
+				NewAds:             totalNewAds,
+				NewProducts:        s.newProductsCount,
+				SavedProducts:      s.newProductsCount,
+				TotalListingsSaved: totalListingsSaved,
+				EmailedAds:         s.emailedAdsCount,
+				ErrorMessage:       errorMessage,
+			}
+
+			// Use a fresh background context so final DB update can complete
+			// even if the parent ctx was cancelled. Retry once on transient errors.
+			finalCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			var updErr error
+			for attempt := 1; attempt <= 2; attempt++ {
+				updErr = s.database.UpdateScrapingRun(finalCtx, run)
+				if updErr == nil {
+					break
+				}
+				s.log(LogLevelWarning, "Attempt %d: Failed to update scraping run: %v", attempt, updErr)
+				time.Sleep(500 * time.Millisecond)
+			}
+			if updErr != nil {
+				s.log(LogLevelWarning, "Failed to update scraping run after retries: %v", updErr)
+			} else {
+				s.log(LogLevelInfo, "Updated scraping run %d with status: %s", s.scrapingRunID, runStatus)
+			}
+		}
+	}()
+
 	searchTerms, err := s.database.GetActiveSearchTerms(ctx)
 	if err != nil {
 		s.log(LogLevelError, "Error getting search terms: %v", err)
-		return fmt.Errorf("failed to get search terms: %w", err)
+		errMsg := fmt.Sprintf("failed to get search terms: %v", err)
+		errorMessage = &errMsg
+		runStatus = "failed"
+		return err
 	}
 
 	if len(s.searchTermsOverride) > 0 {
@@ -110,6 +166,9 @@ func (s *BotService) Run() error {
 
 	if len(searchTerms) == 0 {
 		s.log(LogLevelWarning, "No active search terms found")
+		errMsg := "no active search terms"
+		errorMessage = &errMsg
+		runStatus = "completed"
 		return nil
 	}
 
@@ -128,8 +187,11 @@ func (s *BotService) Run() error {
 		s.jobService.UpdateProgress(s.jobID, 0, len(searchTerms), "")
 	}
 
-	totalAdsFound := 0
-	totalListingsSaved := 0
+	totalAdsFound = 0
+	totalListingsSaved = 0
+	totalNewAds = 0
+	s.newProductsCount = 0
+	s.emailedAdsCount = 0
 	for i, term := range searchTerms {
 		// Check for cancellation before each search term
 		if s.jobService != nil && s.jobID != "" {
@@ -138,6 +200,9 @@ func (s *BotService) Run() error {
 				select {
 				case <-job.CancelChan:
 					s.log(LogLevelInfo, "Job cancelled, stopping after %d/%d search terms", i, len(searchTerms))
+					errMsg := "job cancelled by user"
+					errorMessage = &errMsg
+					runStatus = "cancelled"
 					return nil
 				default:
 				}
@@ -167,12 +232,21 @@ func (s *BotService) Run() error {
 			}
 			newAdsCount++
 			s.log(LogLevelInfo, "Processing new ad: %s (price: %.0f SEK)", ad.Link, ad.Price)
-			if err := s.processAd(ctx, ad); err != nil {
+			result, err := s.processAd(ctx, ad)
+			if err != nil {
 				s.log(LogLevelError, "Error processing ad %s: %v", ad.Link, err)
-			} else {
+			} else if result != nil {
 				totalListingsSaved++
+				if result.NewProduct {
+					s.newProductsCount++
+				}
+				if result.EmailSent {
+					s.emailedAdsCount++
+				}
 			}
 		}
+
+		totalNewAds += newAdsCount
 
 		marketplaceName := s.getMarketplaceName(term.MarketplaceID)
 		history := &models.SearchHistory{
@@ -202,21 +276,7 @@ func (s *BotService) Run() error {
 		}
 	}
 
-	if s.scrapingRunID > 0 {
-		now := time.Now()
-		run := &models.ScrapingRun{
-			ID:                 s.scrapingRunID,
-			CompletedAt:        &now,
-			Status:             "completed",
-			TotalAdsFound:      totalAdsFound,
-			TotalListingsSaved: totalListingsSaved,
-		}
-		if err := s.database.UpdateScrapingRun(ctx, run); err != nil {
-			s.log(LogLevelWarning, "Failed to update scraping run: %v", err)
-		}
-	}
-
-	s.log(LogLevelInfo, "=== BEGBOT FINISHED: Total ads found: %d, Listings saved: %d ===", totalAdsFound, totalListingsSaved)
+	s.log(LogLevelInfo, "=== BEGBOT FINISHED: Total ads found: %d, New ads: %d, New products: %d, Listings saved: %d, Emailed: %d ===", totalAdsFound, totalNewAds, s.newProductsCount, totalListingsSaved, s.emailedAdsCount)
 	return nil
 }
 
@@ -241,7 +301,8 @@ func (s *BotService) processQuery(ctx context.Context, query string) error {
 			continue
 		}
 
-		if err := s.processAd(ctx, ad); err != nil {
+		_, err := s.processAd(ctx, ad)
+		if err != nil {
 			log.Printf("Error processing ad %s: %v", ad.Link, err)
 		}
 	}
@@ -287,7 +348,8 @@ func (s *BotService) isNewLink(link string, newLinks []string) bool {
 	return false
 }
 
-func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
+func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult, error) {
+	result := &ProcessAdResult{}
 	item := s.marketplaceService.ConvertToPotentialItem(ad)
 
 	// Log shipping info from Blocket API
@@ -298,7 +360,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
 		s.log(LogLevelError, "Failed to extract product info: %v", err)
-		return err
+		return result, err
 	}
 
 	s.log(LogLevelInfo, "LLM extracted: Manufacturer=%q, Model=%q, Category=%q, Storage=%q",
@@ -316,12 +378,12 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	validationResult, err := s.ValidateListing(ctx, ad)
 	if err != nil {
 		s.log(LogLevelError, "Failed to validate listing: %v", err)
-		return err
+		return result, err
 	}
 
 	if validationResult == nil {
 		s.log(LogLevelWarning, "Listing validation failed - no matching product found for: %s", ad.Link)
-		return nil
+		return result, nil
 	}
 
 	if validationResult.IsNewProduct {
@@ -335,14 +397,14 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 
 		if len(valInputs) == 0 {
 			s.log(LogLevelWarning, "No valuations collected for new product - skipping listing: %s", ad.Link)
-			return nil
+			return result, nil
 		}
 
 		output, err := s.valuationService.Compile(ctx, valInputs)
 		if err != nil {
 			s.log(LogLevelWarning, "Failed to compile valuations for new product: %v", err)
 			s.log(LogLevelWarning, "Skipping listing due to valuation failure: %s", ad.Link)
-			return nil
+			return result, nil
 		}
 
 		product := &models.Product{
@@ -352,7 +414,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		}
 		if err := s.database.CreateProduct(ctx, product); err != nil {
 			s.log(LogLevelError, "Failed to create product: %v", err)
-			return err
+			return result, err
 		}
 
 		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, product.ID)
@@ -366,7 +428,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 			if delErr := s.database.DeleteProduct(ctx, product.ID); delErr != nil {
 				s.log(LogLevelWarning, "Failed to delete product: %v", delErr)
 			}
-			return nil
+			return result, nil
 		}
 
 		if err := s.database.SetProductEnabled(ctx, product.ID, true); err != nil {
@@ -403,7 +465,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 	candidate, err := s.evaluateItem(ctx, item, validationResult.ProductInfo)
 	if err != nil {
 		s.log(LogLevelError, "Failed to evaluate item: %v", err)
-		return err
+		return result, err
 	}
 
 	productID := validationResult.Product.ID
@@ -450,7 +512,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 
 	if err := s.database.SaveListing(ctx, listing); err != nil {
 		s.log(LogLevelError, "Failed to save listing: %v", err)
-		return err
+		return result, err
 	}
 
 	if len(ad.ImageURLs) > 0 {
@@ -468,18 +530,23 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) error {
 		}
 	}
 
-	go func() {
-		err := s.SendTradingRuleEmail(ctx, listing, validationResult.Product)
-		if err != nil {
-			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
-		}
-	}()
+	err = s.SendTradingRuleEmail(ctx, listing, validationResult.Product)
+	if err != nil {
+		s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
+	} else {
+		result.EmailSent = true
+	}
 
 	if candidate.ShouldBuy {
 		s.log(LogLevelInfo, "RECOMMENDATION: Buy %s for %d SEK (profit: %d SEK)", item.SourceLink, candidate.TotalCost, candidate.EstimatedSell-candidate.TotalCost)
 	}
 
-	return nil
+	result.Saved = true
+	if validationResult.IsNewProduct {
+		result.NewProduct = true
+	}
+
+	return result, nil
 }
 
 func (s *BotService) saveBlocketCategoryFromValuations(ctx context.Context, product *models.Product, valInputs []ValuationInput) error {
