@@ -288,7 +288,7 @@ if $mode == "all" or $mode == "frontend" {
         print $"✓ Socat proxy up: 127.0.0.1:($frontend_port) -> 127.0.0.1:($frontend_internal_port)"
 
         # Starta Nuxt så den lyssnar på internal-port och pekar mot backend publik-port
-        try { ^bash -c $"export PORT=($frontend_internal_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev > ($log_file) 2>&1 & echo $! >> ($pidfile)" } catch { }
+        try { ^bash -c $"export PORT=($frontend_internal_port) HOST=127.0.0.1 API_BASE_URL='http://127.0.0.1:($backend_port)' && npm run dev -- --host > ($log_file) 2>&1 & echo $! >> ($pidfile)" } catch { }
         # Vänta lite så Nuxt hinner starta
         sleep 500ms
         $actual_frontend_url = $"http://($local_ip):($frontend_port)"
