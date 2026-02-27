@@ -779,6 +779,12 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 	}
 
 	profit := computedValuation - *listing.Price
+	if listing.ShippingCost != nil {
+		profit -= *listing.ShippingCost
+	}
+	if listing.ShippingInsurance != nil {
+		profit -= *listing.ShippingInsurance
+	}
 	discountPercent := float64(profit) / float64(computedValuation) * 100
 
 	if profit <= minProfitSEK || discountPercent <= float64(minDiscount) {
@@ -807,6 +813,12 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		emailProfit := computedValuation
 		if listing.Price != nil {
 			emailProfit = computedValuation - *listing.Price
+		}
+		if listing.ShippingCost != nil {
+			emailProfit -= *listing.ShippingCost
+		}
+		if listing.ShippingInsurance != nil {
+			emailProfit -= *listing.ShippingInsurance
 		}
 		profitStr := fmt.Sprintf("%d kr", emailProfit)
 		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
