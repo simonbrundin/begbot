@@ -248,6 +248,15 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS new_products INTEGER DEFAULT 0`,
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS saved_products INTEGER DEFAULT 0`,
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS emailed_ads INTEGER DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS scraping_run_logs (
+			id BIGSERIAL PRIMARY KEY,
+			scraping_run_id BIGINT NOT NULL REFERENCES scraping_runs(id) ON DELETE CASCADE,
+			level VARCHAR(20) NOT NULL CHECK (level IN ('info', 'warning', 'error')),
+			message TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_run_logs_run_id ON scraping_run_logs(scraping_run_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_scraping_run_logs_created_at ON scraping_run_logs(created_at)`,
 		`CREATE TABLE IF NOT EXISTS sent_emails (
 			id SERIAL PRIMARY KEY,
 			listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL,
@@ -1807,6 +1816,71 @@ func (p *Postgres) GetScrapingRunsCount(ctx context.Context) (int, error) {
 	var count int
 	err := p.db.QueryRowContext(ctx, query).Scan(&count)
 	return count, err
+}
+
+func (p *Postgres) SaveScrapingRunLogs(ctx context.Context, logs []*models.ScrapingRunLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	query := `
+		INSERT INTO scraping_run_logs (scraping_run_id, level, message, created_at)
+		VALUES ($1, $2, $3, $4)
+	`
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, log := range logs {
+		_, err := stmt.ExecContext(ctx, log.ScrapingRunID, log.Level, log.Message, log.CreatedAt)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (p *Postgres) GetScrapingRunLogs(ctx context.Context, runID int64) ([]models.ScrapingRunLog, error) {
+	query := `
+		SELECT id, scraping_run_id, level, message, created_at
+		FROM scraping_run_logs
+		WHERE scraping_run_id = $1
+		ORDER BY created_at ASC
+	`
+	rows, err := p.db.QueryContext(ctx, query, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []models.ScrapingRunLog
+	for rows.Next() {
+		var log models.ScrapingRunLog
+		if err := rows.Scan(&log.ID, &log.ScrapingRunID, &log.Level, &log.Message, &log.CreatedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	return logs, rows.Err()
+}
+
+func (p *Postgres) DeleteOldScrapingRunLogs(ctx context.Context, before time.Time) (int64, error) {
+	query := `DELETE FROM scraping_run_logs WHERE created_at < $1`
+	result, err := p.db.ExecContext(ctx, query, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // Conversation methods

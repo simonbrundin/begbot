@@ -41,7 +41,12 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="run in runs" :key="run.id">
+            <tr 
+              v-for="run in runs" 
+              :key="run.id"
+              class="cursor-pointer hover:bg-slate-700/50"
+              @click="openLogs(run.id)"
+            >
               <td class="text-sm text-slate-400">
                 {{ formatDate(run.started_at) }}
               </td>
@@ -104,11 +109,21 @@
         </button>
       </div>
     </div>
+
+    <LogsModal
+      :show="showLogsModal"
+      :run-id="selectedRunId"
+      :logs="logs"
+      :loading="logsLoading"
+      :error="logsError"
+      @close="closeLogsModal"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import type { ScrapingRun } from "~/types/database";
+import type { ScrapingRun } from "~/types/database"
+import type { ScrapingRunLog } from "~/types/database"
 
 interface PaginatedResponse {
   data: ScrapingRun[];
@@ -118,82 +133,121 @@ interface PaginatedResponse {
   total_pages: number;
 }
 
-const api = useApi();
+interface LogsResponse {
+  scraping_run_id: number
+  logs: ScrapingRunLog[]
+}
 
-const runs = ref<ScrapingRun[]>([]);
-const loading = ref(false);
-const error = ref<string | null>(null);
-const currentPage = ref(1);
-const pageSize = ref(20);
-const totalCount = ref(0);
-const totalPages = ref(0);
+const api = useApi()
+
+const runs = ref<ScrapingRun[]>([])
+const loading = ref(false)
+const error = ref<string | null>(null)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const totalCount = ref(0)
+const totalPages = ref(0)
+
+const showLogsModal = ref(false)
+const selectedRunId = ref(0)
+const logs = ref<ScrapingRunLog[]>([])
+const logsLoading = ref(false)
+const logsError = ref<string | null>(null)
 
 const fetchHistory = async () => {
-  loading.value = true;
-  error.value = null;
+  loading.value = true
+  error.value = null
   try {
-    const response = await api.get<PaginatedResponse>(`/scraping-runs?page=${currentPage.value}&page_size=${pageSize.value}`);
-    runs.value = response.data;
-    totalCount.value = response.total_count;
-    totalPages.value = response.total_pages;
+    const response = await api.get<PaginatedResponse>(`/scraping-runs?page=${currentPage.value}&page_size=${pageSize.value}`)
+    runs.value = response.data
+    totalCount.value = response.total_count
+    totalPages.value = response.total_pages
   } catch (e) {
-    console.error("Failed to fetch scraping runs:", e);
-    error.value = "Kunde inte ladda scrapinghistorik";
+    console.error("Failed to fetch scraping runs:", e)
+    error.value = "Kunde inte ladda scrapinghistorik"
   } finally {
-    loading.value = false;
+    loading.value = false
   }
-};
+}
+
+const fetchLogs = async (runId: number) => {
+  logsLoading.value = true
+  logsError.value = null
+  try {
+    const response = await api.get<LogsResponse>(`/scraping-runs/${runId}/logs`)
+    logs.value = response.logs
+  } catch (e) {
+    console.error("Failed to fetch logs:", e)
+    logsError.value = "Kunde inte ladda loggar"
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+const openLogs = async (runId: number) => {
+  selectedRunId.value = runId
+  logs.value = []
+  showLogsModal.value = true
+  await fetchLogs(runId)
+}
+
+const closeLogsModal = () => {
+  showLogsModal.value = false
+  selectedRunId.value = 0
+  logs.value = []
+  logsError.value = null
+}
 
 const changePage = (page: number) => {
-  if (page < 1 || page > totalPages.value) return;
-  currentPage.value = page;
-  fetchHistory();
-};
+  if (page < 1 || page > totalPages.value) return
+  currentPage.value = page
+  fetchHistory()
+}
 
 const refreshHistory = () => {
-  fetchHistory();
-};
+  fetchHistory()
+}
 
 const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr);
+  const date = new Date(dateStr)
   return date.toLocaleString('sv-SE', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
-};
+  })
+}
 
 const statusText = (status: string) => {
   switch (status) {
     case 'running':
-      return 'Pågående';
+      return 'Pågående'
     case 'completed':
-      return 'Slutförd';
+      return 'Slutförd'
     case 'failed':
-      return 'Misslyckad';
+      return 'Misslyckad'
     case 'cancelled':
-      return 'Avbruten';
+      return 'Avbruten'
     default:
-      return status;
+      return status
   }
-};
+}
 
 const statusClass = (status: string) => {
   switch (status) {
     case 'running':
-      return 'text-blue-400';
+      return 'text-blue-400'
     case 'completed':
-      return 'text-emerald-400';
+      return 'text-emerald-400'
     case 'failed':
-      return 'text-red-400';
+      return 'text-red-400'
     case 'cancelled':
-      return 'text-yellow-400';
+      return 'text-yellow-400'
     default:
-      return 'text-slate-400';
+      return 'text-slate-400'
   }
-};
+}
 
-onMounted(fetchHistory);
+onMounted(fetchHistory)
 </script>
