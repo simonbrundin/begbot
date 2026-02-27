@@ -115,6 +115,7 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	// Scraping runs history (protected)
 	mux.Handle("/api/scraping-runs", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunsHandler)))
+	mux.Handle("/api/scraping-runs/", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunLogsHandler)))
 	// Sent emails history (protected)
 	mux.Handle("/api/sent-emails", authMiddleware.Middleware(http.HandlerFunc(server.sentEmailsHandler)))
 	mux.Handle("/api/sent-emails/", authMiddleware.Middleware(http.HandlerFunc(server.sentEmailItemHandler)))
@@ -1510,6 +1511,34 @@ func (s *Server) scrapingRunsHandler(w http.ResponseWriter, r *http.Request) {
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
+	})
+}
+
+func (s *Server) scrapingRunLogsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/scraping-runs/")
+	idStr = strings.TrimSuffix(idStr, "/logs")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		api.WriteError(w, "Invalid scraping run ID", "INVALID_ID", 400)
+		return
+	}
+
+	logs, err := s.db.GetScrapingRunLogs(r.Context(), id)
+	if err != nil {
+		logger.Printf("ERROR GetScrapingRunLogs: %v", err)
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"scraping_run_id": id,
+		"logs":            logs,
 	})
 }
 

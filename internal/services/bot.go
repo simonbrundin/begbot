@@ -2,11 +2,13 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"begbot/internal/config"
@@ -40,6 +42,7 @@ type BotService struct {
 	searchTermsOverride []models.SearchTerm
 	newProductsCount    int
 	emailedAdsCount     int
+	logBuffer           []*models.ScrapingRunLog
 }
 
 type ProcessAdResult struct {
@@ -87,10 +90,42 @@ func (s *BotService) log(level LogLevel, format string, args ...interface{}) {
 	if s.jobService != nil && s.jobID != "" {
 		s.jobService.AddLog(s.jobID, level, message)
 	}
+
+	if s.scrapingRunID > 0 && (level == LogLevelError || level == LogLevelWarning || shouldSaveInfoLog(message)) {
+		s.logBuffer = append(s.logBuffer, &models.ScrapingRunLog{
+			ScrapingRunID: s.scrapingRunID,
+			Level:         string(level),
+			Message:       message,
+			CreatedAt:     time.Now(),
+		})
+	}
+}
+
+func shouldSaveInfoLog(message string) bool {
+	importantPhrases := []string{
+		"=== STARTING",
+		"=== COMPLETED",
+		"Found",
+		"ads for",
+		"Processing search term",
+		"Processing new ad",
+		"Skipping duplicate",
+		"Email sent",
+		"Listing saved",
+		"Product created",
+		"Search term",
+		"Trading rules",
+	}
+	for _, phrase := range importantPhrases {
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *BotService) Run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	s.log(LogLevelInfo, "=== STARTING BEGBOT ===")
@@ -128,8 +163,6 @@ func (s *BotService) Run() error {
 				ErrorMessage:       errorMessage,
 			}
 
-			// Use a fresh background context so final DB update can complete
-			// even if the parent ctx was cancelled. Retry once on transient errors.
 			finalCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -146,6 +179,25 @@ func (s *BotService) Run() error {
 				s.log(LogLevelWarning, "Failed to update scraping run after retries: %v", updErr)
 			} else {
 				s.log(LogLevelInfo, "Updated scraping run %d with status: %s", s.scrapingRunID, runStatus)
+			}
+
+			if len(s.logBuffer) > 0 {
+				for attempt := 1; attempt <= 2; attempt++ {
+					updErr = s.database.SaveScrapingRunLogs(finalCtx, s.logBuffer)
+					if updErr == nil {
+						break
+					}
+					s.log(LogLevelWarning, "Attempt %d: Failed to save scraping run logs: %v", attempt, updErr)
+					time.Sleep(500 * time.Millisecond)
+				}
+			}
+
+			beforeDate := now.AddDate(0, 0, -30)
+			deleted, delErr := s.database.DeleteOldScrapingRunLogs(finalCtx, beforeDate)
+			if delErr != nil {
+				s.log(LogLevelWarning, "Failed to delete old scraping run logs: %v", delErr)
+			} else if deleted > 0 {
+				s.log(LogLevelInfo, "Deleted %d old scraping run logs", deleted)
 			}
 		}
 	}()
@@ -223,20 +275,28 @@ func (s *BotService) Run() error {
 
 		newAdsCount := 0
 		for _, ad := range adsList {
-			exists, err := s.database.ListingExistsByLink(ctx, ad.Link)
+			adCtx, adCancel := context.WithTimeout(ctx, 60*time.Second)
+			exists, err := s.database.ListingExistsByLink(adCtx, ad.Link)
 			if err != nil {
 				s.log(LogLevelError, "Error checking listing exists: %v", err)
+				adCancel()
 				continue
 			}
 			if exists {
 				s.log(LogLevelInfo, "Skipping duplicate: %s", ad.Link)
+				adCancel()
 				continue
 			}
 			newAdsCount++
 			s.log(LogLevelInfo, "Processing new ad: %s (price: %.0f SEK)", ad.Link, ad.Price)
-			result, err := s.processAd(ctx, ad)
+			result, err := s.processAd(adCtx, ad)
+			adCancel()
 			if err != nil {
-				s.log(LogLevelError, "Error processing ad %s: %v", ad.Link, err)
+				if errors.Is(err, context.DeadlineExceeded) {
+					s.log(LogLevelWarning, "Timed out processing ad: %s - skipping and continuing", ad.Link)
+				} else {
+					s.log(LogLevelError, "Error processing ad %s: %v", ad.Link, err)
+				}
 			} else if result != nil {
 				totalListingsSaved++
 				if result.NewProduct {

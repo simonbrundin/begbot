@@ -210,6 +210,14 @@ type ScrapingRun struct {
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 }
 
+type ScrapingRunLog struct {
+	ID            int64     `json:"id" db:"id"`
+	ScrapingRunID int64     `json:"scraping_run_id" db:"scraping_run_id"`
+	Level         string    `json:"level" db:"level"`
+	Message       string    `json:"message" db:"message"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+}
+
 type SentEmail struct {
 	ID               int64     `json:"id" db:"id"`
 	ListingID        *int64    `json:"listing_id,omitempty" db:"listing_id"`

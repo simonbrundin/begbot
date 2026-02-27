@@ -143,6 +143,14 @@ export interface ScrapingRun {
   created_at: string
 }
 
+export interface ScrapingRunLog {
+  id: number
+  scraping_run_id: number
+  level: 'info' | 'warning' | 'error'
+  message: string
+  created_at: string
+}
+
 export interface SentEmail {
   id: number
   listing_id: number | null
