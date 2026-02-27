@@ -50,6 +50,13 @@ type ProductInfo struct {
 	ProductID    string
 }
 
+type ProductIntactResult struct {
+	IsIntact          bool
+	HasMinorScratches bool
+	IssuesFound       []string
+	Reasoning         string
+}
+
 func (s *LLMService) ExtractProductInfo(ctx context.Context, title, adText, link string) (*ProductInfo, error) {
 	prompt := fmt.Sprintf(`Analyze this marketplace ad and extract product information. Return ONLY a JSON object with these exact fields:
 {
@@ -134,4 +141,52 @@ func formatValuationsForPrompt(vals []ValuationInput) string {
 		result += "\n"
 	}
 	return result
+}
+
+func (s *LLMService) EvaluateProductIntact(ctx context.Context, adText, title string) (*ProductIntactResult, error) {
+	prompt := fmt.Sprintf(`Analysera annonsen och avgör om produkten är HEL.
+
+EXEMPEL PÅ SVAR:
+- {"is_intact": true, "has_minor_scratches": false, "issues_found": [], "reasoning": "Inga skador nämndes"}
+- {"is_intact": true, "has_minor_scratches": true, "issues_found": [], "reasoning": "Nämner mindre repor"}
+- {"is_intact": false, "has_minor_scratches": false, "issues_found": ["trasig skärm"], "reasoning": "Skärmen är trasig"}
+
+REGEL: is_intact ska vara TRUE om annonsen INTE nämner några problem/skador.
+is_intact ska vara FALSE endast om det STÅR att produkten har problem.
+
+Annonsens titel: %s
+Annonsens text: %s
+
+Svara med JSON (endast JSON, inget annat):`, title, adText)
+
+	log.Printf("[LLM] Evaluating product intactness for: %s", title)
+
+	model := s.client.GetModel("EvaluateProductIntact", s.defaultModel, s.models)
+
+	content, err := s.client.Chat(ctx, model, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("LLM API error: %w", err)
+	}
+
+	content = cleanupMarkdownJSON(content)
+
+	log.Printf("[LLM] Raw response for product intactness: %s", content)
+
+	var result ProductIntactResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		log.Printf("[LLM] Failed to parse LLM response as JSON: %v", err)
+		log.Printf("[LLM] Raw response: %s", content)
+		return &ProductIntactResult{
+			IsIntact:  true,
+			Reasoning: "Kunde inte analysera produktskicket, accepterar produkten",
+		}, nil
+	}
+
+	log.Printf("[LLM] Parsed result: is_intact=%v, has_minor_scratches=%v, issues=%v, reasoning=%s",
+		result.IsIntact, result.HasMinorScratches, result.IssuesFound, result.Reasoning)
+
+	log.Printf("[LLM] Product intactness: is_intact=%v, has_minor_scratches=%v, issues=%v",
+		result.IsIntact, result.HasMinorScratches, result.IssuesFound)
+
+	return &result, nil
 }

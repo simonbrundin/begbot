@@ -48,25 +48,27 @@ type TradeStatus struct {
 }
 
 type Listing struct {
-	ID                  int64      `json:"id" db:"id"`
-	ProductID           *int64     `json:"product_id,omitempty" db:"product_id"`
-	Price               *int       `json:"price,omitempty" db:"price"`
-	Valuation           int        `json:"valuation" db:"valuation"`
-	Link                string     `json:"link" db:"link"`
-	ConditionID         *int64     `json:"condition_id,omitempty" db:"condition_id"`
-	ShippingCost        *int       `json:"shipping_cost,omitempty" db:"shipping_cost"`
-	ShippingInsurance   *int       `json:"shipping_insurance,omitempty" db:"shipping_insurance"`
-	Title               string     `json:"title" db:"title"`
-	Description         *string    `json:"description,omitempty" db:"description"`
-	MarketplaceID       *int64     `json:"marketplace_id,omitempty" db:"marketplace_id"`
-	Status              string     `json:"status" db:"status"`
-	PublicationDate     *time.Time `json:"publication_date,omitempty" db:"publication_date"`
-	SoldDate            *time.Time `json:"sold_date,omitempty" db:"sold_date"`
-	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
-	IsMyListing         bool       `json:"is_my_listing" db:"is_my_listing"`
-	EligibleForShipping *bool      `json:"eligible_for_shipping,omitempty" db:"eligible_for_shipping"`
-	SellerPaysShipping  *bool      `json:"seller_pays_shipping,omitempty" db:"seller_pays_shipping"`
-	BuyNow              *bool      `json:"buy_now,omitempty" db:"buy_now"`
+	ID                   int64      `json:"id" db:"id"`
+	ProductID            *int64     `json:"product_id,omitempty" db:"product_id"`
+	Price                *int       `json:"price,omitempty" db:"price"`
+	Valuation            int        `json:"valuation" db:"valuation"`
+	Link                 string     `json:"link" db:"link"`
+	ConditionID          *int64     `json:"condition_id,omitempty" db:"condition_id"`
+	ShippingCost         *int       `json:"shipping_cost,omitempty" db:"shipping_cost"`
+	ShippingInsurance    *int       `json:"shipping_insurance,omitempty" db:"shipping_insurance"`
+	Title                string     `json:"title" db:"title"`
+	Description          *string    `json:"description,omitempty" db:"description"`
+	MarketplaceID        *int64     `json:"marketplace_id,omitempty" db:"marketplace_id"`
+	Status               string     `json:"status" db:"status"`
+	PublicationDate      *time.Time `json:"publication_date,omitempty" db:"publication_date"`
+	SoldDate             *time.Time `json:"sold_date,omitempty" db:"sold_date"`
+	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
+	IsMyListing          bool       `json:"is_my_listing" db:"is_my_listing"`
+	EligibleForShipping  *bool      `json:"eligible_for_shipping,omitempty" db:"eligible_for_shipping"`
+	SellerPaysShipping   *bool      `json:"seller_pays_shipping,omitempty" db:"seller_pays_shipping"`
+	BuyNow               *bool      `json:"buy_now,omitempty" db:"buy_now"`
+	IsIntact             *bool      `json:"is_intact,omitempty" db:"is_intact"`
+	IntactCheckReasoning *string    `json:"intact_check_reasoning,omitempty" db:"intact_check_reasoning"`
 }
 
 type Transaction struct {

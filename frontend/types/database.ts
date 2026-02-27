@@ -54,6 +54,8 @@ export interface Listing {
   eligible_for_shipping: boolean | null
   seller_pays_shipping: boolean | null
   buy_now: boolean | null
+  is_intact: boolean | null
+  intact_check_reasoning: string | null
 }
 
 export interface Transaction {

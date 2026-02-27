@@ -18,6 +18,29 @@ import (
 
 var botLogger *log.Logger
 
+var damageKeywords = []string{
+	"spricka", "sprucken", "spruckit",
+	"trasig", "trasigt",
+	"buckla", "bucklat",
+	"skärmfel", "skärm sprucken", "skärm trasig",
+	"vattenskada", "vattenskadad",
+	"oxidation", "oxiderad",
+	"fungerar inte", "fungerar ej", "fungerar inte",
+	"defekt", "fel på",
+	"repa", "repor",
+	"intryckt", "intryckt hörn",
+}
+
+func hasDamageInReasoning(reasoning string) bool {
+	reasoningLower := strings.ToLower(reasoning)
+	for _, keyword := range damageKeywords {
+		if strings.Contains(reasoningLower, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	// Log to file
 	f, err := os.OpenFile("/home/simon/repos/begbot/bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -448,6 +471,29 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 		return result, nil
 	}
 
+	intactResult, err := s.llmService.EvaluateProductIntact(ctx, ad.AdText, ad.Title)
+	s.log(LogLevelInfo, "DEBUG: intactResult=%v, err=%v", intactResult, err)
+	var isIntact *bool
+	var intactReasoning *string
+	if err != nil {
+		s.log(LogLevelWarning, "Failed to evaluate product intactness: %v - accepting product", err)
+	} else if hasDamageInReasoning(intactResult.Reasoning) {
+		s.log(LogLevelWarning, "Product has damage mentioned in reasoning - skipping listing: %s, reasoning: %s",
+			ad.Link, intactResult.Reasoning)
+		return result, nil
+	} else if len(intactResult.IssuesFound) > 0 {
+		s.log(LogLevelWarning, "Product has issues - skipping listing: %s, issues: %v, reasoning: %s",
+			ad.Link, intactResult.IssuesFound, intactResult.Reasoning)
+		return result, nil
+	} else {
+		s.log(LogLevelInfo, "Product is intact - no issues found, continuing...")
+		intactVal := true
+		isIntact = &intactVal
+		if intactResult.Reasoning != "" {
+			intactReasoning = &intactResult.Reasoning
+		}
+	}
+
 	if validationResult.IsNewProduct {
 		s.log(LogLevelInfo, "New product detected: %s %s (%s) - collecting valuations before creation",
 			validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
@@ -559,17 +605,19 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 	}
 
 	listing := &models.Listing{
-		ProductID:         &productID,
-		Price:             &price,
-		Link:              ad.Link,
-		Title:             ad.Title,
-		Description:       &ad.AdText,
-		MarketplaceID:     &marketplaceID,
-		Status:            "active",
-		PublicationDate:   &now,
-		IsMyListing:       false,
-		ShippingCost:      func() *int { v := int(item.BuyShippingCost); return &v }(),
-		ShippingInsurance: func() *int { v := item.BuyShippingInsurance; return &v }(),
+		ProductID:            &productID,
+		Price:                &price,
+		Link:                 ad.Link,
+		Title:                ad.Title,
+		Description:          &ad.AdText,
+		MarketplaceID:        &marketplaceID,
+		Status:               "active",
+		PublicationDate:      &now,
+		IsMyListing:          false,
+		ShippingCost:         func() *int { v := int(item.BuyShippingCost); return &v }(),
+		ShippingInsurance:    func() *int { v := item.BuyShippingInsurance; return &v }(),
+		IsIntact:             isIntact,
+		IntactCheckReasoning: intactReasoning,
 	}
 
 	if err := s.database.SaveListing(ctx, listing); err != nil {
