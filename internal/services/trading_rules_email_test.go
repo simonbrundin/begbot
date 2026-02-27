@@ -522,7 +522,7 @@ func Test_SendTradingRuleEmailMethodExists(t *testing.T) {
 		NewPrice: intPtr(15000),
 	}
 
-	err := bot.SendTradingRuleEmail(context.Background(), listing, product)
+	err := bot.SendTradingRuleEmail(context.Background(), listing, product, 1)
 	if err != nil {
 		t.Logf("Email sent (non-blocking error logged): %v", err)
 	}
@@ -560,7 +560,7 @@ func Test_SendTradingRuleEmailIsNonBlocking(t *testing.T) {
 
 	done := make(chan bool)
 	go func() {
-		bot.SendTradingRuleEmail(context.Background(), listing, product)
+		bot.SendTradingRuleEmail(context.Background(), listing, product, 1)
 		done <- true
 	}()
 
@@ -604,7 +604,7 @@ func Test_SendTradingRuleEmailSendsToRecipients(t *testing.T) {
 		NewPrice: intPtr(15000),
 	}
 
-	err := bot.SendTradingRuleEmail(context.Background(), listing, product)
+	err := bot.SendTradingRuleEmail(context.Background(), listing, product, 1)
 	if err != nil {
 		t.Logf("Email send result: %v", err)
 	}

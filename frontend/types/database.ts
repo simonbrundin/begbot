@@ -143,6 +143,25 @@ export interface ScrapingRun {
   created_at: string
 }
 
+export interface SentEmail {
+  id: number
+  listing_id: number | null
+  listing_title: string
+  listing_link: string
+  listing_price: number | null
+  listing_valuation: number | null
+  profit: number
+  discount_percent: number
+  product_id: number | null
+  product_name: string | null
+  brand: string | null
+  sent_at: string
+  scraping_run_id: number | null
+  search_term_id: number | null
+  marketplace_id: number | null
+  created_at: string
+}
+
 export interface Valuation {
   id: number
   product_id: number | null

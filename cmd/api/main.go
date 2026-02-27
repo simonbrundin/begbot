@@ -115,6 +115,10 @@ func main() {
 	mux.Handle("/api/search-terms/", authMiddleware.Middleware(http.HandlerFunc(server.searchTermItemHandler)))
 	// Scraping runs history (protected)
 	mux.Handle("/api/scraping-runs", authMiddleware.Middleware(http.HandlerFunc(server.scrapingRunsHandler)))
+	// Sent emails history (protected)
+	mux.Handle("/api/sent-emails", authMiddleware.Middleware(http.HandlerFunc(server.sentEmailsHandler)))
+	mux.Handle("/api/sent-emails/", authMiddleware.Middleware(http.HandlerFunc(server.sentEmailItemHandler)))
+	mux.Handle("/api/sent-emails/products", authMiddleware.Middleware(http.HandlerFunc(server.sentEmailsProductsHandler)))
 
 	// Cron jobs management
 	// Expose status endpoint without auth so the UI can poll running jobs
@@ -1507,6 +1511,143 @@ func (s *Server) scrapingRunsHandler(w http.ResponseWriter, r *http.Request) {
 		PageSize:   pageSize,
 		TotalPages: totalPages,
 	})
+}
+
+func (s *Server) sentEmailsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	pageStr := r.URL.Query().Get("page")
+	pageSizeStr := r.URL.Query().Get("page_size")
+	productIDStr := r.URL.Query().Get("product_id")
+	searchTermIDStr := r.URL.Query().Get("search_term_id")
+	fromDateStr := r.URL.Query().Get("from_date")
+	toDateStr := r.URL.Query().Get("to_date")
+
+	page := 1
+	pageSize := 20
+
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	filter := db.GetSentEmailsFilter{}
+
+	if productIDStr != "" {
+		if pid, err := strconv.ParseInt(productIDStr, 10, 64); err == nil && pid > 0 {
+			filter.ProductID = &pid
+		}
+	}
+	if searchTermIDStr != "" {
+		if stid, err := strconv.ParseInt(searchTermIDStr, 10, 64); err == nil && stid > 0 {
+			filter.SearchTermID = &stid
+		}
+	}
+	if fromDateStr != "" {
+		if fromDate, err := time.Parse("2006-01-02", fromDateStr); err == nil {
+			filter.FromDate = &fromDate
+		}
+	}
+	if toDateStr != "" {
+		if toDate, err := time.Parse("2006-01-02", toDateStr); err == nil {
+			toDate = toDate.Add(24 * time.Hour)
+			filter.ToDate = &toDate
+		}
+	}
+
+	offset := (page - 1) * pageSize
+	emails, err := s.db.GetSentEmails(r.Context(), filter, pageSize, offset)
+	if err != nil {
+		logger.Printf("ERROR GetSentEmails: %v", err)
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	count, err := s.db.GetSentEmailsCount(r.Context(), filter)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	type PaginatedResponse struct {
+		Data       []models.SentEmail `json:"data"`
+		TotalCount int                `json:"total_count"`
+		Page       int                `json:"page"`
+		PageSize   int                `json:"page_size"`
+		TotalPages int                `json:"total_pages"`
+	}
+
+	totalPages := count / pageSize
+	if count%pageSize > 0 {
+		totalPages++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(PaginatedResponse{
+		Data:       emails,
+		TotalCount: count,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
+}
+
+func (s *Server) sentEmailItemHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/sent-emails/")
+	if idStr == "" {
+		api.WriteBadRequest(w, "ID required")
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		api.WriteBadRequest(w, "invalid ID")
+		return
+	}
+
+	email, err := s.db.GetSentEmailByID(r.Context(), id)
+	if err != nil {
+		api.WriteServerError(w, err.Error())
+		return
+	}
+	if email == nil {
+		api.WriteError(w, "Not found", "NOT_FOUND", 404)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(email)
+}
+
+func (s *Server) sentEmailsProductsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+		return
+	}
+
+	products, err := s.db.GetProductsWithSentEmails(r.Context())
+	if err != nil {
+		logger.Printf("ERROR GetProductsWithSentEmails: %v", err)
+		api.WriteServerError(w, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(products)
 }
 
 func (s *Server) compiledValuationsHandler(w http.ResponseWriter, r *http.Request) {

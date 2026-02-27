@@ -210,6 +210,25 @@ type ScrapingRun struct {
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 }
 
+type SentEmail struct {
+	ID               int64     `json:"id" db:"id"`
+	ListingID        *int64    `json:"listing_id,omitempty" db:"listing_id"`
+	ListingTitle     string    `json:"listing_title" db:"listing_title"`
+	ListingLink      string    `json:"listing_link" db:"listing_link"`
+	ListingPrice     *int      `json:"listing_price,omitempty" db:"listing_price"`
+	ListingValuation *int      `json:"listing_valuation,omitempty" db:"listing_valuation"`
+	Profit           int       `json:"profit" db:"profit"`
+	DiscountPercent  float64   `json:"discount_percent" db:"discount_percent"`
+	ProductID        *int64    `json:"product_id,omitempty" db:"product_id"`
+	ProductName      *string   `json:"product_name,omitempty" db:"product_name"`
+	Brand            *string   `json:"brand,omitempty" db:"brand"`
+	SentAt           time.Time `json:"sent_at" db:"sent_at"`
+	ScrapingRunID    *int64    `json:"scraping_run_id,omitempty" db:"scraping_run_id"`
+	SearchTermID     *int64    `json:"search_term_id,omitempty" db:"search_term_id"`
+	MarketplaceID    *int16    `json:"marketplace_id,omitempty" db:"marketplace_id"`
+	CreatedAt        time.Time `json:"created_at" db:"created_at"`
+}
+
 type Conversation struct {
 	ID            int64     `json:"id" db:"id"`
 	ListingID     int64     `json:"listing_id" db:"listing_id"`

@@ -248,6 +248,28 @@ func (p *Postgres) Migrate() error {
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS new_products INTEGER DEFAULT 0`,
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS saved_products INTEGER DEFAULT 0`,
 		`ALTER TABLE scraping_runs ADD COLUMN IF NOT EXISTS emailed_ads INTEGER DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS sent_emails (
+			id SERIAL PRIMARY KEY,
+			listing_id INTEGER REFERENCES listings(id) ON DELETE SET NULL,
+			listing_title TEXT NOT NULL,
+			listing_link TEXT NOT NULL,
+			listing_price INTEGER,
+			listing_valuation INTEGER,
+			profit INTEGER,
+			discount_percent REAL,
+			product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+			product_name TEXT,
+			brand TEXT,
+			sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			scraping_run_id INTEGER REFERENCES scraping_runs(id) ON DELETE SET NULL,
+			search_term_id INTEGER REFERENCES search_terms(id) ON DELETE SET NULL,
+			marketplace_id SMALLINT REFERENCES marketplaces(id),
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sent_emails_sent_at ON sent_emails(sent_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sent_emails_listing_id ON sent_emails(listing_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sent_emails_product_id ON sent_emails(product_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sent_emails_scraping_run_id ON sent_emails(scraping_run_id)`,
 		`CREATE TABLE IF NOT EXISTS cron_jobs (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -1999,4 +2021,167 @@ func (p *Postgres) UpdateMessageContent(ctx context.Context, id int64, content s
 	query := `UPDATE messages SET content = $1, updated_at = NOW() WHERE id = $2`
 	_, err := p.db.ExecContext(ctx, query, content, id)
 	return err
+}
+
+// SentEmail methods
+func (p *Postgres) CreateSentEmail(ctx context.Context, email *models.SentEmail) error {
+	query := `
+		INSERT INTO sent_emails (
+			listing_id, listing_title, listing_link, listing_price, listing_valuation,
+			profit, discount_percent, product_id, product_name, brand,
+			scraping_run_id, search_term_id, marketplace_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, sent_at, created_at
+	`
+	return p.db.QueryRowContext(ctx, query,
+		email.ListingID, email.ListingTitle, email.ListingLink, email.ListingPrice, email.ListingValuation,
+		email.Profit, email.DiscountPercent, email.ProductID, email.ProductName, email.Brand,
+		email.ScrapingRunID, email.SearchTermID, email.MarketplaceID,
+	).Scan(&email.ID, &email.SentAt, &email.CreatedAt)
+}
+
+type GetSentEmailsFilter struct {
+	SearchTermID *int64
+	ProductID    *int64
+	FromDate     *time.Time
+	ToDate       *time.Time
+}
+
+func (p *Postgres) GetSentEmails(ctx context.Context, filter GetSentEmailsFilter, limit, offset int) ([]models.SentEmail, error) {
+	query := `
+		SELECT id, listing_id, listing_title, listing_link, listing_price, listing_valuation,
+			profit, discount_percent, product_id, product_name, brand, sent_at,
+			scraping_run_id, search_term_id, marketplace_id, created_at
+		FROM sent_emails
+		WHERE 1=1
+	`
+	args := []interface{}{}
+	argIndex := 1
+
+	if filter.SearchTermID != nil {
+		query += fmt.Sprintf(" AND search_term_id = $%d", argIndex)
+		args = append(args, *filter.SearchTermID)
+		argIndex++
+	}
+	if filter.ProductID != nil {
+		query += fmt.Sprintf(" AND product_id = $%d", argIndex)
+		args = append(args, *filter.ProductID)
+		argIndex++
+	}
+	if filter.FromDate != nil {
+		query += fmt.Sprintf(" AND sent_at >= $%d", argIndex)
+		args = append(args, *filter.FromDate)
+		argIndex++
+	}
+	if filter.ToDate != nil {
+		query += fmt.Sprintf(" AND sent_at <= $%d", argIndex)
+		args = append(args, *filter.ToDate)
+		argIndex++
+	}
+
+	query += fmt.Sprintf(" ORDER BY sent_at DESC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	args = append(args, limit, offset)
+
+	rows, err := p.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var emails []models.SentEmail
+	for rows.Next() {
+		var email models.SentEmail
+		if err := rows.Scan(
+			&email.ID, &email.ListingID, &email.ListingTitle, &email.ListingLink, &email.ListingPrice, &email.ListingValuation,
+			&email.Profit, &email.DiscountPercent, &email.ProductID, &email.ProductName, &email.Brand, &email.SentAt,
+			&email.ScrapingRunID, &email.SearchTermID, &email.MarketplaceID, &email.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		emails = append(emails, email)
+	}
+	return emails, rows.Err()
+}
+
+func (p *Postgres) GetSentEmailsCount(ctx context.Context, filter GetSentEmailsFilter) (int, error) {
+	query := `SELECT COUNT(*) FROM sent_emails WHERE 1=1`
+	args := []interface{}{}
+	argIndex := 1
+
+	if filter.SearchTermID != nil {
+		query += fmt.Sprintf(" AND search_term_id = $%d", argIndex)
+		args = append(args, *filter.SearchTermID)
+		argIndex++
+	}
+	if filter.ProductID != nil {
+		query += fmt.Sprintf(" AND product_id = $%d", argIndex)
+		args = append(args, *filter.ProductID)
+		argIndex++
+	}
+	if filter.FromDate != nil {
+		query += fmt.Sprintf(" AND sent_at >= $%d", argIndex)
+		args = append(args, *filter.FromDate)
+		argIndex++
+	}
+	if filter.ToDate != nil {
+		query += fmt.Sprintf(" AND sent_at <= $%d", argIndex)
+		args = append(args, *filter.ToDate)
+		argIndex++
+	}
+
+	var count int
+	err := p.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
+func (p *Postgres) GetSentEmailByID(ctx context.Context, id int64) (*models.SentEmail, error) {
+	query := `
+		SELECT id, listing_id, listing_title, listing_link, listing_price, listing_valuation,
+			profit, discount_percent, product_id, product_name, brand, sent_at,
+			scraping_run_id, search_term_id, marketplace_id, created_at
+		FROM sent_emails
+		WHERE id = $1
+	`
+	var email models.SentEmail
+	err := p.db.QueryRowContext(ctx, query, id).Scan(
+		&email.ID, &email.ListingID, &email.ListingTitle, &email.ListingLink, &email.ListingPrice, &email.ListingValuation,
+		&email.Profit, &email.DiscountPercent, &email.ProductID, &email.ProductName, &email.Brand, &email.SentAt,
+		&email.ScrapingRunID, &email.SearchTermID, &email.MarketplaceID, &email.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &email, nil
+}
+
+func (p *Postgres) GetProductsWithSentEmails(ctx context.Context) ([]models.Product, error) {
+	query := `
+		SELECT DISTINCT p.id, p.name, p.brand, p.category, p.blocket_category, p.blocket_category_name,
+			p.model_variant, p.sell_packaging_cost, p.sell_postage_cost, p.new_price, p.enabled, p.created_at
+		FROM products p
+		INNER JOIN sent_emails se ON se.product_id = p.id
+		ORDER BY p.name
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []models.Product
+	for rows.Next() {
+		var product models.Product
+		if err := rows.Scan(
+			&product.ID, &product.Name, &product.Brand, &product.Category, &product.BlocketCategory,
+			&product.BlocketCategoryName, &product.ModelVariant, &product.SellPackagingCost,
+			&product.SellPostageCost, &product.NewPrice, &product.Enabled, &product.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		products = append(products, product)
+	}
+	return products, rows.Err()
 }

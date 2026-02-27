@@ -36,6 +36,7 @@ type BotService struct {
 	jobService          *JobService
 	jobID               string
 	scrapingRunID       int64
+	currentSearchTermID int64
 	searchTermsOverride []models.SearchTerm
 	newProductsCount    int
 	emailedAdsCount     int
@@ -210,6 +211,7 @@ func (s *BotService) Run() error {
 		}
 
 		s.log(LogLevelInfo, "Processing search term %d/%d: %s", i+1, len(searchTerms), term.Description)
+		s.currentSearchTermID = term.ID
 
 		adsList, err := s.marketplaceService.FetchAdsFromURL(ctx, s.getMarketplaceName(term.MarketplaceID), term.URL)
 		if err != nil {
@@ -530,7 +532,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 		}
 	}
 
-	err = s.SendTradingRuleEmail(ctx, listing, validationResult.Product)
+	err = s.SendTradingRuleEmail(ctx, listing, validationResult.Product, s.currentSearchTermID)
 	if err != nil {
 		s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
 	} else {
@@ -656,7 +658,7 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*ValidateLi
 	}, nil
 }
 
-func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product) error {
+func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product, searchTermID int64) error {
 	// Skip if product is disabled
 	if product != nil && product.Enabled != nil && !*product.Enabled {
 		s.log(LogLevelInfo, "Skipping email: product %s is disabled", *product.Name)
@@ -813,6 +815,33 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
 		} else {
 			s.log(LogLevelInfo, "Sent trading rule email for listing: %s", listing.Link)
+
+			// Log the sent email to database
+			if s.database != nil {
+				var marketplaceID *int16
+				if listing.MarketplaceID != nil {
+					mid := int16(*listing.MarketplaceID)
+					marketplaceID = &mid
+				}
+				sentEmail := &models.SentEmail{
+					ListingID:        &listing.ID,
+					ListingTitle:     listing.Title,
+					ListingLink:      listing.Link,
+					ListingPrice:     listing.Price,
+					ListingValuation: &computedValuation,
+					Profit:           profit,
+					DiscountPercent:  discountPercent,
+					ProductID:        listing.ProductID,
+					ProductName:      &productName,
+					Brand:            product.Brand,
+					ScrapingRunID:    &s.scrapingRunID,
+					SearchTermID:     &searchTermID,
+					MarketplaceID:    marketplaceID,
+				}
+				if dbErr := s.database.CreateSentEmail(context.Background(), sentEmail); dbErr != nil {
+					s.log(LogLevelWarning, "Failed to log sent email: %v", dbErr)
+				}
+			}
 		}
 	}()
 

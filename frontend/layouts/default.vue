@@ -69,6 +69,14 @@
           <span>Historik</span>
         </NuxtLink>
         <NuxtLink
+          to="/sent-emails"
+          class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white text-sm ml-4"
+          active-class="bg-slate-700 text-white"
+        >
+          <Icon name="lucide:mail" />
+          <span>Skickade mejl</span>
+        </NuxtLink>
+        <NuxtLink
           to="/scraping/scheduled"
           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white text-sm ml-4"
           active-class="bg-slate-700 text-white"
