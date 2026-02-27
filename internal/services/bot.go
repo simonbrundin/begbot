@@ -815,6 +815,33 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 			s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
 		} else {
 			s.log(LogLevelInfo, "Sent trading rule email for listing: %s", listing.Link)
+
+			// Log the sent email to database
+			if s.database != nil {
+				var marketplaceID *int16
+				if listing.MarketplaceID != nil {
+					mid := int16(*listing.MarketplaceID)
+					marketplaceID = &mid
+				}
+				sentEmail := &models.SentEmail{
+					ListingID:        &listing.ID,
+					ListingTitle:     listing.Title,
+					ListingLink:      listing.Link,
+					ListingPrice:     listing.Price,
+					ListingValuation: &computedValuation,
+					Profit:           profit,
+					DiscountPercent:  discountPercent,
+					ProductID:        listing.ProductID,
+					ProductName:      &productName,
+					Brand:            product.Brand,
+					ScrapingRunID:    &s.scrapingRunID,
+					SearchTermID:     &searchTermID,
+					MarketplaceID:    marketplaceID,
+				}
+				if dbErr := s.database.CreateSentEmail(context.Background(), sentEmail); dbErr != nil {
+					s.log(LogLevelWarning, "Failed to log sent email: %v", dbErr)
+				}
+			}
 		}
 	}()
 
