@@ -18,9 +18,11 @@ func TestFetchTraderaFallback_EndToEndPaths(t *testing.T) {
 		var buf bytes.Buffer
 		s := &MarketplaceService{logger: log.New(&buf, "", 0)}
 		ev := &mockEvomi{html: ``, err: errors.New("shouldn't be called")}
-		api := &mockTraderaClient{ads: nil, err: errors.New("shouldn't be called")}
+		// For the direct-success scenario we don't register a traderaClient so
+		// the service will attempt a direct scrape first (matching the test
+		// intent after normalization to API-first behavior in other tests).
 		s.evomiScraper = ev
-		s.traderaClient = api
+		s.traderaClient = nil
 
 		directCalled := false
 		s.fetchDirect = func(ctx context.Context, searchURL string) ([]RawAd, bool, error) {
@@ -40,8 +42,8 @@ func TestFetchTraderaFallback_EndToEndPaths(t *testing.T) {
 		if !directCalled {
 			t.Fatalf("direct-success: expected direct to be called")
 		}
-		if ev.calls != 0 || api.calls != 0 || proxyCalled {
-			t.Fatalf("direct-success: expected no fallback providers called; evomi=%v api=%v proxy=%v", ev.calls, api.calls, proxyCalled)
+		if ev.calls != 0 || proxyCalled {
+			t.Fatalf("direct-success: expected no fallback providers called; evomi=%v api=nil proxy=%v", ev.calls, proxyCalled)
 		}
 		if len(ads) != 1 || ads[0].Title != "Direct" {
 			t.Fatalf("direct-success: unexpected ads: %+v", ads)
@@ -53,9 +55,9 @@ func TestFetchTraderaFallback_EndToEndPaths(t *testing.T) {
 		var buf bytes.Buffer
 		s := &MarketplaceService{logger: log.New(&buf, "", 0)}
 		ev := &mockEvomi{html: `<html><body><a data-link-type="next-link" href="/item/1" aria-describedby="item-card-11-price"><span class="item-card_title__okrrK">E</span></a><div id="item-card-11-price" data-testid="bin-price">500 kr</div></body></html>`}
-		api := &mockTraderaClient{ads: nil, err: errors.New("shouldn't be called")}
+		// No Tradera API client for this scenario; we want direct->evomi path.
 		s.evomiScraper = ev
-		s.traderaClient = api
+		s.traderaClient = nil
 
 		s.fetchDirect = func(ctx context.Context, searchURL string) ([]RawAd, bool, error) {
 			return nil, true, nil
@@ -81,8 +83,8 @@ func TestFetchTraderaFallback_EndToEndPaths(t *testing.T) {
 		if !strings.Contains(logs, "Fetched 1 ads from Evomi Scraper API") {
 			t.Fatalf("expected evomi success log; got logs=%q", logs)
 		}
-		if api.calls != 0 || proxyCalled {
-			t.Fatalf("evomi-path: expected no tradera api or proxy calls; api=%v proxy=%v", api.calls, proxyCalled)
+		if proxyCalled {
+			t.Fatalf("evomi-path: expected no proxy calls; proxy=%v", proxyCalled)
 		}
 		if len(ads) != 1 || ads[0].Price != 500 {
 			t.Fatalf("evomi-path: unexpected ads: %+v", ads)
@@ -111,17 +113,19 @@ func TestFetchTraderaFallback_EndToEndPaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("api-path: unexpected error: %v", err)
 		}
-		if ev.calls == 0 {
-			// evomi was attempted even if it failed
-			t.Fatalf("api-path: expected evomi to be called")
-		}
+		// With API-first ordering we expect the Tradera API to be invoked and
+		// return results. Evomi should not be called in this scenario because
+		// the API succeeded early.
 		if api.calls == 0 {
 			t.Fatalf("api-path: expected tradera API to be called")
 		}
+		if ev.calls != 0 {
+			t.Fatalf("api-path: expected evomi NOT to be called when API succeeds; evomi=%v", ev.calls)
+		}
 		// logs should show evomi failure and tradera success
 		logs := buf.String()
-		if !strings.Contains(logs, "Evomi scraper failed") {
-			t.Fatalf("expected evomi failed log; got logs=%q", logs)
+		if !strings.Contains(logs, "Trying Tradera API") {
+			t.Fatalf("expected log to contain Tradera API attempt; got logs=%q", logs)
 		}
 		if !strings.Contains(logs, "Fetched 1 ads from Tradera API") {
 			t.Fatalf("expected tradera api success log; got logs=%q", logs)
