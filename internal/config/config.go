@@ -34,11 +34,28 @@ type AppConfig struct {
 type ScrapingConfig struct {
 	Tradera TraderaConfig `yaml:"tradera"`
 	Blocket BlocketConfig `yaml:"blocket"`
+	Proxy   ProxyConfig   `yaml:"proxy"`
+	Scraper ScraperConfig `yaml:"scraper"`
+}
+
+type ScraperConfig struct {
+	Provider    string `yaml:"provider"`
+	EvomiAPIKey string `yaml:"evomi_api_key"`
+}
+
+type ProxyConfig struct {
+	Provider string `yaml:"provider"`
+	APIKey   string `yaml:"api_key"`
+	Country  string `yaml:"country"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 type TraderaConfig struct {
 	Timeout time.Duration `yaml:"timeout"`
 	BaseURL string        `yaml:"base_url"`
+	AppID   string        `yaml:"app_id"`
+	AppKey  string        `yaml:"app_key"`
 }
 
 type BlocketConfig struct {
@@ -82,9 +99,19 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	applyDefaults(&cfg)
 	applyEnvOverrides(&cfg)
 
 	return &cfg, nil
+}
+
+func applyDefaults(cfg *Config) {
+	if cfg.Scraping.Tradera.Timeout == 0 {
+		cfg.Scraping.Tradera.Timeout = 30 * time.Second
+	}
+	if cfg.Scraping.Blocket.Timeout == 0 {
+		cfg.Scraping.Blocket.Timeout = 30 * time.Second
+	}
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -138,5 +165,32 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("SMTP_FROM"); v != "" {
 		cfg.Email.From = v
+	}
+	if v := os.Getenv("TRADERA_APP_ID"); v != "" {
+		cfg.Scraping.Tradera.AppID = v
+	}
+	if v := os.Getenv("TRADERA_APP_KEY"); v != "" {
+		cfg.Scraping.Tradera.AppKey = v
+	}
+	if v := os.Getenv("PROXY_PROVIDER"); v != "" {
+		cfg.Scraping.Proxy.Provider = v
+	}
+	if v := os.Getenv("PROXY_API_KEY"); v != "" {
+		cfg.Scraping.Proxy.APIKey = v
+	}
+	if v := os.Getenv("PROXY_COUNTRY"); v != "" {
+		cfg.Scraping.Proxy.Country = v
+	}
+	if v := os.Getenv("PROXY_USERNAME"); v != "" {
+		cfg.Scraping.Proxy.Username = v
+	}
+	if v := os.Getenv("PROXY_PASSWORD"); v != "" {
+		cfg.Scraping.Proxy.Password = v
+	}
+	if v := os.Getenv("SCRAPER_PROVIDER"); v != "" {
+		cfg.Scraping.Scraper.Provider = v
+	}
+	if v := os.Getenv("EVOMI_SCRAPER_API_KEY"); v != "" {
+		cfg.Scraping.Scraper.EvomiAPIKey = v
 	}
 }
