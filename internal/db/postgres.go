@@ -1489,6 +1489,53 @@ func (p *Postgres) CountTotalAdsForProduct(ctx context.Context, productID int64)
 }
 
 func (p *Postgres) ShouldAutoEnableProduct(ctx context.Context, productID int64) (bool, error) {
+	// First check if product has at least 2 active valuations with values
+	valuations, err := p.GetLatestValuationByTypeForProduct(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+
+	// Get enabled valuation types
+	enabledTypes, err := p.GetValuationTypes(ctx)
+	if err != nil {
+		return false, err
+	}
+	enabledMap := make(map[int16]bool)
+	for _, t := range enabledTypes {
+		if t.Enabled {
+			enabledMap[t.ID] = true
+		}
+	}
+
+	// Get product-specific configs
+	configs, err := p.GetProductValuationTypeConfigs(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+	activeMap := make(map[int16]bool)
+	for _, c := range configs {
+		activeMap[c.ValuationTypeID] = c.IsActive
+	}
+
+	// Count active valuations with values
+	activeValuationsWithValues := 0
+	for _, v := range valuations {
+		if !enabledMap[v.ValuationTypeID] {
+			continue
+		}
+		if isActive, hasConfig := activeMap[v.ValuationTypeID]; hasConfig && !isActive {
+			continue
+		}
+		if v.Valuation > 0 {
+			activeValuationsWithValues++
+		}
+	}
+
+	if activeValuationsWithValues < 2 {
+		fmt.Printf("ShouldAutoEnableProduct(%d): only %d active valuation(s) with values (need at least 2), skipping\n", productID, activeValuationsWithValues)
+		return false, nil
+	}
+
 	weightedValuation, confidence, err := p.ComputeWeightedValuationForProduct(ctx, productID)
 	if err != nil {
 		return false, err
@@ -1503,51 +1550,75 @@ func (p *Postgres) ShouldAutoEnableProduct(ctx context.Context, productID int64)
 		return false, err
 	}
 
-	tradingRules, err := p.GetTradingRules(ctx)
+	autoEnableSettings, err := p.GetAutoEnableSettings(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	minProfitSEK := 0
-	if tradingRules.MinProfitSEK != nil {
-		minProfitSEK = *tradingRules.MinProfitSEK
+	minConfidence := 90
+	if autoEnableSettings.MinConfidence != nil {
+		minConfidence = *autoEnableSettings.MinConfidence
 	}
 
-	minDiscount := 0
-	if tradingRules.MinDiscount != nil {
-		minDiscount = *tradingRules.MinDiscount
+	value := 500
+	if autoEnableSettings.Value != nil {
+		value = *autoEnableSettings.Value
 	}
 
-	minConfidence := 80
-	if tradingRules.MinConfidence != nil {
-		minConfidence = *tradingRules.MinConfidence
+	minAds := 10
+	if autoEnableSettings.MinAds != nil {
+		minAds = *autoEnableSettings.MinAds
 	}
 
-	minAds := 50
-	if tradingRules.MinAds != nil {
-		minAds = *tradingRules.MinAds
-	}
-
-	var threshold float64
-	var passesThreshold bool
-
-	if minDiscount > 0 {
-		threshold = float64(minProfitSEK) / (float64(minDiscount) / 100.0)
-		passesThreshold = float64(weightedValuation) > threshold
-	} else {
-		threshold = float64(minProfitSEK)
-		passesThreshold = weightedValuation > minProfitSEK
-	}
-
+	passesValue := weightedValuation >= value
 	passesConfidence := confidence >= float64(minConfidence)
 	passesAds := totalAds >= minAds
 
-	shouldEnable := passesThreshold && passesConfidence && passesAds
+	shouldEnable := passesValue && passesConfidence && passesAds
 
-	fmt.Printf("ShouldAutoEnableProduct(%d): weightedValuation=%d, confidence=%.2f, totalAds=%d, threshold=%.2f, passesThreshold=%v, minProfitSEK=%d, minDiscount=%d, minConfidence=%d, minAds=%d, passesConfidence=%v, passesAds=%v, shouldEnable=%v\n",
-		productID, weightedValuation, confidence, totalAds, threshold, passesThreshold, minProfitSEK, minDiscount, minConfidence, minAds, passesConfidence, passesAds, shouldEnable)
+	fmt.Printf("ShouldAutoEnableProduct(%d): weightedValuation=%d, confidence=%.2f, totalAds=%d, value=%d, minConfidence=%d, minAds=%d, activeValuationsWithValues=%d, passesValue=%v, passesConfidence=%v, passesAds=%v, shouldEnable=%v\n",
+		productID, weightedValuation, confidence, totalAds, value, minConfidence, minAds, activeValuationsWithValues, passesValue, passesConfidence, passesAds, shouldEnable)
 
 	return shouldEnable, nil
+}
+
+func (p *Postgres) ShouldSaveProduct(ctx context.Context, productID int64) (bool, error) {
+	weightedValuation, confidence, err := p.ComputeWeightedValuationForProduct(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+
+	totalAds, err := p.CountTotalAdsForProduct(ctx, productID)
+	if err != nil {
+		return false, err
+	}
+
+	saveSettings, err := p.GetSaveSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	minConfidence := 0
+	if saveSettings.MinConfidence != nil {
+		minConfidence = *saveSettings.MinConfidence
+	}
+
+	value := 500
+	if saveSettings.Value != nil {
+		value = *saveSettings.Value
+	}
+
+	// For new products without existing valuations, weightedValuation might be 0
+	// In that case, we still allow saving the product
+	passesValue := weightedValuation == 0 || weightedValuation >= value
+	passesConfidence := confidence >= float64(minConfidence) || weightedValuation == 0
+
+	shouldSave := passesValue && passesConfidence
+
+	fmt.Printf("ShouldSaveProduct(%d): weightedValuation=%d, confidence=%.2f, totalAds=%d, value=%d, minConfidence=%d, passesValue=%v, passesConfidence=%v, shouldSave=%v\n",
+		productID, weightedValuation, confidence, totalAds, value, minConfidence, passesValue, passesConfidence, shouldSave)
+
+	return shouldSave, nil
 }
 
 func (p *Postgres) GetTradingRules(ctx context.Context) (*models.Economics, error) {
@@ -1610,6 +1681,209 @@ func (p *Postgres) SaveTradingRules(ctx context.Context, rules *models.Economics
 		return err
 	}
 	rules.ID = id
+	return nil
+}
+
+func (p *Postgres) GetEmailSettings(ctx context.Context) (*models.EmailSettings, error) {
+	query := `SELECT id, is_active, COALESCE(only_enabled_products, true), min_profit_sek, min_discount FROM email_settings LIMIT 1`
+	var settings models.EmailSettings
+	var isActive interface{}
+	var onlyEnabledProducts interface{}
+	err := p.db.QueryRowContext(ctx, query).Scan(&settings.ID, &isActive, &onlyEnabledProducts, &settings.MinProfitSEK, &settings.MinDiscount)
+	if err == sql.ErrNoRows {
+		defaultProfit := 200
+		defaultDiscount := 15
+		trueVal := true
+		return &models.EmailSettings{
+			IsActive:            &trueVal,
+			OnlyEnabledProducts: &trueVal,
+			MinProfitSEK:        &defaultProfit,
+			MinDiscount:         &defaultDiscount,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if isActive != nil {
+		val := isActive.(bool)
+		settings.IsActive = &val
+	}
+	if onlyEnabledProducts != nil {
+		val := onlyEnabledProducts.(bool)
+		settings.OnlyEnabledProducts = &val
+	}
+	return &settings, nil
+}
+
+func (p *Postgres) SaveEmailSettings(ctx context.Context, settings *models.EmailSettings) error {
+	var isActive interface{}
+	if settings.IsActive != nil {
+		isActive = *settings.IsActive
+	}
+	var onlyEnabledProducts interface{}
+	if settings.OnlyEnabledProducts != nil {
+		onlyEnabledProducts = *settings.OnlyEnabledProducts
+	}
+	var minProfit interface{}
+	if settings.MinProfitSEK != nil {
+		minProfit = *settings.MinProfitSEK
+	}
+	var minDiscount interface{}
+	if settings.MinDiscount != nil {
+		minDiscount = *settings.MinDiscount
+	}
+
+	res, err := p.db.ExecContext(ctx, `UPDATE email_settings SET is_active = $1, only_enabled_products = $2, min_profit_sek = $3, min_discount = $4`, isActive, onlyEnabledProducts, minProfit, minDiscount)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO email_settings (is_active, only_enabled_products, min_profit_sek, min_discount) VALUES ($1, $2, $3, $4) RETURNING id`, isActive, onlyEnabledProducts, minProfit, minDiscount).Scan(&id)
+	if err != nil {
+		return err
+	}
+	settings.ID = id
+	return nil
+}
+
+func (p *Postgres) GetSaveSettings(ctx context.Context) (*models.SaveSettings, error) {
+	query := `SELECT id, COALESCE(min_confidence, 0), COALESCE(value, 500), COALESCE(min_ads, 10) FROM save_settings LIMIT 1`
+	var settings models.SaveSettings
+	err := p.db.QueryRowContext(ctx, query).Scan(&settings.ID, &settings.MinConfidence, &settings.Value, &settings.MinAds)
+	if err == sql.ErrNoRows {
+		defaultValue := 500
+		defaultMinAds := 10
+		defaultConfidence := 0
+		return &models.SaveSettings{
+			MinConfidence: &defaultConfidence,
+			Value:         &defaultValue,
+			MinAds:        &defaultMinAds,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (p *Postgres) SaveSaveSettings(ctx context.Context, settings *models.SaveSettings) error {
+	var minConfidence interface{}
+	if settings.MinConfidence != nil {
+		minConfidence = *settings.MinConfidence
+	}
+	var value interface{}
+	if settings.Value != nil {
+		value = *settings.Value
+	}
+	var minAds interface{}
+	if settings.MinAds != nil {
+		minAds = *settings.MinAds
+	}
+
+	res, err := p.db.ExecContext(ctx, `UPDATE save_settings SET min_confidence = $1, value = $2, min_ads = $3`, minConfidence, value, minAds)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO save_settings (min_confidence, value, min_ads) VALUES ($1, $2, $3) RETURNING id`, minConfidence, value, minAds).Scan(&id)
+	if err != nil {
+		return err
+	}
+	settings.ID = id
+	return nil
+}
+
+func (p *Postgres) GetEconomySettings(ctx context.Context) (*models.EconomySettings, error) {
+	query := `SELECT id, COALESCE(turnover_days, 30) FROM economy_settings LIMIT 1`
+	var settings models.EconomySettings
+	err := p.db.QueryRowContext(ctx, query).Scan(&settings.ID, &settings.TurnoverDays)
+	if err == sql.ErrNoRows {
+		defaultDays := 30
+		return &models.EconomySettings{
+			TurnoverDays: &defaultDays,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (p *Postgres) SaveEconomySettings(ctx context.Context, settings *models.EconomySettings) error {
+	var turnoverDays interface{}
+	if settings.TurnoverDays != nil {
+		turnoverDays = *settings.TurnoverDays
+	}
+
+	res, err := p.db.ExecContext(ctx, `UPDATE economy_settings SET turnover_days = $1`, turnoverDays)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO economy_settings (turnover_days) VALUES ($1) RETURNING id`, turnoverDays).Scan(&id)
+	if err != nil {
+		return err
+	}
+	settings.ID = id
+	return nil
+}
+
+func (p *Postgres) GetAutoEnableSettings(ctx context.Context) (*models.AutoEnableSettings, error) {
+	query := `SELECT id, COALESCE(min_confidence, 90), COALESCE(value, 500), COALESCE(min_ads, 10) FROM auto_enable_settings LIMIT 1`
+	var settings models.AutoEnableSettings
+	err := p.db.QueryRowContext(ctx, query).Scan(&settings.ID, &settings.MinConfidence, &settings.Value, &settings.MinAds)
+	if err == sql.ErrNoRows {
+		defaultConfidence := 90
+		defaultValue := 500
+		defaultMinAds := 10
+		return &models.AutoEnableSettings{
+			MinConfidence: &defaultConfidence,
+			Value:         &defaultValue,
+			MinAds:        &defaultMinAds,
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (p *Postgres) SaveAutoEnableSettings(ctx context.Context, settings *models.AutoEnableSettings) error {
+	var minConfidence interface{}
+	if settings.MinConfidence != nil {
+		minConfidence = *settings.MinConfidence
+	}
+	var value interface{}
+	if settings.Value != nil {
+		value = *settings.Value
+	}
+	var minAds interface{}
+	if settings.MinAds != nil {
+		minAds = *settings.MinAds
+	}
+
+	res, err := p.db.ExecContext(ctx, `UPDATE auto_enable_settings SET min_confidence = $1, value = $2, min_ads = $3`, minConfidence, value, minAds)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+	var id int64
+	err = p.db.QueryRowContext(ctx, `INSERT INTO auto_enable_settings (min_confidence, value, min_ads) VALUES ($1, $2, $3) RETURNING id`, minConfidence, value, minAds).Scan(&id)
+	if err != nil {
+		return err
+	}
+	settings.ID = id
 	return nil
 }
 
@@ -2124,7 +2398,7 @@ type GetSentEmailsFilter struct {
 func (p *Postgres) GetSentEmails(ctx context.Context, filter GetSentEmailsFilter, limit, offset int) ([]models.SentEmail, error) {
 	query := `
 		SELECT id, listing_id, listing_title, listing_link, listing_price, listing_valuation,
-			profit, discount_percent, product_id, product_name, brand, sent_at,
+			profit, discount_percent, product_id, product_name, brand, confidence, sent_at,
 			scraping_run_id, search_term_id, marketplace_id, created_at
 		FROM sent_emails
 		WHERE 1=1
@@ -2167,7 +2441,7 @@ func (p *Postgres) GetSentEmails(ctx context.Context, filter GetSentEmailsFilter
 		var email models.SentEmail
 		if err := rows.Scan(
 			&email.ID, &email.ListingID, &email.ListingTitle, &email.ListingLink, &email.ListingPrice, &email.ListingValuation,
-			&email.Profit, &email.DiscountPercent, &email.ProductID, &email.ProductName, &email.Brand, &email.SentAt,
+			&email.Profit, &email.DiscountPercent, &email.ProductID, &email.ProductName, &email.Brand, &email.Confidence, &email.SentAt,
 			&email.ScrapingRunID, &email.SearchTermID, &email.MarketplaceID, &email.CreatedAt,
 		); err != nil {
 			return nil, err

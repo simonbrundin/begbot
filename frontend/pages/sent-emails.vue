@@ -68,6 +68,7 @@
               <th>Annons</th>
               <th>Pris</th>
               <th>Värdering</th>
+              <th>Säkerhet</th>
               <th>Profit</th>
               <th>Rabatt</th>
               <th>Produkt</th>
@@ -95,6 +96,12 @@
               </td>
               <td>{{ email.listing_price ? email.listing_price + ' kr' : '-' }}</td>
               <td>{{ email.listing_valuation ? email.listing_valuation + ' kr' : '-' }}</td>
+              <td>
+                <span v-if="email.confidence" :class="email.confidence > 70 ? 'text-emerald-400' : email.confidence > 40 ? 'text-yellow-400' : 'text-slate-400'">
+                  {{ email.confidence.toFixed(1) }}%
+                </span>
+                <span v-else class="text-slate-400">-</span>
+              </td>
               <td>
                 <span :class="email.profit > 0 ? 'text-emerald-400' : 'text-slate-400'">
                   {{ email.profit }} kr

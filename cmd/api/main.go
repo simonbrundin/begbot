@@ -142,6 +142,10 @@ func main() {
 	mux.HandleFunc("/api/valuations", server.valuationsHandler)
 	mux.HandleFunc("/api/valuations/", server.valuationItemHandler)
 	mux.HandleFunc("/api/trading-rules", server.tradingRulesHandler)
+	mux.HandleFunc("/api/settings/email", server.emailSettingsHandler)
+	mux.HandleFunc("/api/settings/save", server.saveSettingsHandler)
+	mux.HandleFunc("/api/settings/economy", server.economySettingsHandler)
+	mux.HandleFunc("/api/settings/auto-enable", server.autoEnableSettingsHandler)
 	mux.HandleFunc("/api/conversations", server.conversationsHandler)
 	mux.HandleFunc("/api/conversations/", server.conversationItemHandler)
 	mux.HandleFunc("/api/messages", server.messagesHandler)
@@ -1030,6 +1034,166 @@ func (s *Server) tradingRulesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		api.WriteSuccess(w, rules)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) emailSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		settings, err := s.db.GetEmailSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	case "PUT", "POST":
+		var payload models.EmailSettings
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		if payload.MinProfitSEK != nil && *payload.MinProfitSEK < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_profit_sek", Message: "must be non-negative"}})
+			return
+		}
+		if payload.MinDiscount != nil && *payload.MinDiscount < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_discount", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveEmailSettings(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		settings, err := s.db.GetEmailSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) saveSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		settings, err := s.db.GetSaveSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	case "PUT", "POST":
+		var payload models.SaveSettings
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		if payload.MinConfidence != nil && (*payload.MinConfidence < 0 || *payload.MinConfidence > 100) {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_confidence", Message: "must be between 0 and 100"}})
+			return
+		}
+		if payload.Value != nil && *payload.Value < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "value", Message: "must be non-negative"}})
+			return
+		}
+		if payload.MinAds != nil && *payload.MinAds < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_ads", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveSaveSettings(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		settings, err := s.db.GetSaveSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) economySettingsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		settings, err := s.db.GetEconomySettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	case "PUT", "POST":
+		var payload models.EconomySettings
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		if payload.TurnoverDays != nil && *payload.TurnoverDays < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "turnover_days", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveEconomySettings(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		settings, err := s.db.GetEconomySettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	default:
+		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
+	}
+}
+
+func (s *Server) autoEnableSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		settings, err := s.db.GetAutoEnableSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
+		return
+	case "PUT", "POST":
+		var payload models.AutoEnableSettings
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
+			return
+		}
+		if payload.MinConfidence != nil && (*payload.MinConfidence < 0 || *payload.MinConfidence > 100) {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "min_confidence", Message: "must be between 0 and 100"}})
+			return
+		}
+		if payload.Value != nil && *payload.Value < 0 {
+			api.WriteValidationError(w, []api.ValidationError{{Field: "value", Message: "must be non-negative"}})
+			return
+		}
+		if err := s.db.SaveAutoEnableSettings(r.Context(), &payload); err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		settings, err := s.db.GetAutoEnableSettings(r.Context())
+		if err != nil {
+			api.WriteServerError(w, err.Error())
+			return
+		}
+		api.WriteSuccess(w, settings)
 		return
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
