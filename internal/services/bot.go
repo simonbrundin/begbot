@@ -248,15 +248,19 @@ func (s *BotService) Run() error {
 		return nil
 	}
 
-	tradingRules, err := s.database.GetTradingRules(ctx)
+	emailSettings, err := s.database.GetEmailSettings(ctx)
 	if err != nil {
-		s.log(LogLevelWarning, "Failed to get trading rules: %v", err)
-		tradingRules = &models.Economics{
-			MinProfitSEK: intPtr(0),
-			MinDiscount:  intPtr(0),
+		s.log(LogLevelWarning, "Failed to get email settings: %v", err)
+		defaultProfit := 200
+		defaultDiscount := 15
+		trueVal := true
+		emailSettings = &models.EmailSettings{
+			IsActive:     &trueVal,
+			MinProfitSEK: &defaultProfit,
+			MinDiscount:  &defaultDiscount,
 		}
 	}
-	s.log(LogLevelInfo, "Trading rules: min_profit_sek=%d, min_discount=%d", ptrVal(tradingRules.MinProfitSEK), ptrVal(tradingRules.MinDiscount))
+	s.log(LogLevelInfo, "Email settings: is_active=%v, only_enabled_products=%v, min_profit_sek=%d, min_discount=%d", ptrBoolVal(emailSettings.IsActive), ptrBoolVal(emailSettings.OnlyEnabledProducts), ptrVal(emailSettings.MinProfitSEK), ptrVal(emailSettings.MinDiscount))
 
 	if s.jobService != nil && s.jobID != "" {
 		s.jobService.StartJob(s.jobID)
@@ -420,6 +424,13 @@ func ptrVal(p *int) int {
 	return *p
 }
 
+func ptrBoolVal(b *bool) bool {
+	if b == nil {
+		return false
+	}
+	return *b
+}
+
 func ptrBool(b bool) *bool {
 	return &b
 }
@@ -525,13 +536,23 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 			return result, err
 		}
 
-		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, product.ID)
-		if checkErr != nil {
-			s.log(LogLevelWarning, "Failed to check auto-enable for new product %d: %v", product.ID, checkErr)
+		// Save valuations BEFORE checking save/auto-enable criteria
+		if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", product.ID), valInputs); err != nil {
+			s.log(LogLevelWarning, "Failed to save valuations for new product: %v", err)
 		}
 
-		if !shouldEnable {
-			s.log(LogLevelWarning, "New product %s %s does not meet auto-enable criteria - deleting product and skipping listing",
+		if err := s.saveBlocketCategoryFromValuations(ctx, product, valInputs); err != nil {
+			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", product.ID, err)
+		}
+
+		// Now check if product should be saved
+		shouldSave, checkErr := s.database.ShouldSaveProduct(ctx, product.ID)
+		if checkErr != nil {
+			s.log(LogLevelWarning, "Failed to check save criteria for new product %d: %v", product.ID, checkErr)
+		}
+
+		if !shouldSave {
+			s.log(LogLevelWarning, "New product %s %s does not meet save criteria - deleting product and skipping listing",
 				validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model)
 			if delErr := s.database.DeleteProduct(ctx, product.ID); delErr != nil {
 				s.log(LogLevelWarning, "Failed to delete product: %v", delErr)
@@ -539,18 +560,18 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 			return result, nil
 		}
 
-		if err := s.database.SetProductEnabled(ctx, product.ID, true); err != nil {
-			s.log(LogLevelWarning, "Failed to enable new product %d: %v", product.ID, err)
-		} else {
-			s.log(LogLevelInfo, "Auto-enabled new product: ID=%d (passed trading rules)", product.ID)
+		// Check if product should be auto-enabled
+		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, product.ID)
+		if checkErr != nil {
+			s.log(LogLevelWarning, "Failed to check auto-enable for new product %d: %v", product.ID, checkErr)
 		}
 
-		if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", product.ID), valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save valuations for new product: %v", err)
-		}
-
-		if err := s.saveBlocketCategoryFromValuations(ctx, product, valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", product.ID, err)
+		if shouldEnable {
+			if err := s.database.SetProductEnabled(ctx, product.ID, true); err != nil {
+				s.log(LogLevelWarning, "Failed to enable new product %d: %v", product.ID, err)
+			} else {
+				s.log(LogLevelInfo, "Auto-enabled new product: ID=%d (passed auto-enable criteria)", product.ID)
+			}
 		}
 
 		validationResult.Product = product
@@ -767,63 +788,61 @@ func (s *BotService) ValidateListing(ctx context.Context, ad RawAd) (*ValidateLi
 }
 
 func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.Listing, product *models.Product, searchTermID int64) error {
-	// Skip if product is disabled
-	if product != nil && product.Enabled != nil && !*product.Enabled {
-		s.log(LogLevelInfo, "Skipping email: product %s is disabled", *product.Name)
-		return nil
-	}
-
-	var tradingRules *models.Economics
+	var emailSettings *models.EmailSettings
 	var err error
 
 	if s.database != nil {
-		tradingRules, err = s.database.GetTradingRules(ctx)
+		emailSettings, err = s.database.GetEmailSettings(ctx)
 		if err != nil {
-			s.log(LogLevelWarning, "Failed to get trading rules: %v", err)
+			s.log(LogLevelWarning, "Failed to get email settings: %v", err)
 		}
 	}
 
-	if tradingRules == nil {
-		defaultProfit := 0
-		defaultDiscount := 0
-		defaultConfidence := 80
-		tradingRules = &models.Economics{
-			MinProfitSEK:  &defaultProfit,
-			MinDiscount:   &defaultDiscount,
-			MinConfidence: &defaultConfidence,
+	if emailSettings == nil {
+		defaultProfit := 200
+		defaultDiscount := 15
+		trueVal := true
+		emailSettings = &models.EmailSettings{
+			IsActive:            &trueVal,
+			OnlyEnabledProducts: &trueVal,
+			MinProfitSEK:        &defaultProfit,
+			MinDiscount:         &defaultDiscount,
 		}
+	}
+
+	// Skip if email is globally disabled
+	if emailSettings.IsActive != nil && !*emailSettings.IsActive {
+		s.log(LogLevelInfo, "Skipping email: email is disabled in settings")
+		return nil
+	}
+
+	// Skip if only_enabled_products is true and product is disabled
+	onlyEnabledProducts := true
+	if emailSettings.OnlyEnabledProducts != nil {
+		onlyEnabledProducts = *emailSettings.OnlyEnabledProducts
+	}
+	if onlyEnabledProducts && product != nil && product.Enabled != nil && !*product.Enabled {
+		s.log(LogLevelInfo, "Skipping email: product %s is disabled and only_enabled_products is true", *product.Name)
+		return nil
 	}
 
 	minProfitSEK := 0
-	if tradingRules.MinProfitSEK != nil {
-		minProfitSEK = *tradingRules.MinProfitSEK
+	if emailSettings.MinProfitSEK != nil {
+		minProfitSEK = *emailSettings.MinProfitSEK
 	}
 
 	minDiscount := 0
-	if tradingRules.MinDiscount != nil {
-		minDiscount = *tradingRules.MinDiscount
-	}
-
-	minConfidence := 80
-	if tradingRules.MinConfidence != nil {
-		minConfidence = *tradingRules.MinConfidence
+	if emailSettings.MinDiscount != nil {
+		minDiscount = *emailSettings.MinDiscount
 	}
 
 	// Use computed product-level valuation with confidence
 	computedValuation := listing.Valuation
-	valuationConfidence := 0.0
 	if listing.ProductID != nil && s.database != nil {
 		if cv, conf, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
 			computedValuation = cv
-			valuationConfidence = conf
+			_ = conf // valuation confidence is not used for email settings anymore
 		}
-	}
-
-	// Check confidence threshold
-	if valuationConfidence < float64(minConfidence) {
-		s.log(LogLevelInfo, "Listing does not pass trading rules: confidence=%.2f%% (<%d%%)",
-			valuationConfidence, minConfidence)
-		return nil
 	}
 
 	profit := computedValuation - *listing.Price
@@ -836,7 +855,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 	discountPercent := float64(profit) / float64(computedValuation) * 100
 
 	if profit <= minProfitSEK || discountPercent <= float64(minDiscount) {
-		s.log(LogLevelInfo, "Listing does not pass trading rules: profit=%d (>%d), discount=%.2f%% (>%d%%)",
+		s.log(LogLevelInfo, "Listing does not pass email settings: profit=%d (>%d), discount=%.2f%% (>%d%%)",
 			profit, minProfitSEK, discountPercent, minDiscount)
 		return nil
 	}
@@ -870,7 +889,6 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		}
 		profitStr := fmt.Sprintf("%d kr", emailProfit)
 		discountStr := fmt.Sprintf("%.0f%%", discountPercent)
-		securityPercentStr := fmt.Sprintf("%.0f%%", valuationConfidence)
 
 		// Shipping cost
 		shippingCostStr := "0 kr"
@@ -922,7 +940,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 			"Valuation":       fmt.Sprintf("%d kr", computedValuation),
 			"Profit":          profitStr,
 			"Discount":        discountStr,
-			"SecurityPercent": securityPercentStr,
+			"SecurityPercent": "N/A",
 			"ShippingCost":    shippingCostStr,
 			"Product":         productName,
 			"Description":     desc,
@@ -943,6 +961,16 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 					mid := int16(*listing.MarketplaceID)
 					marketplaceID = &mid
 				}
+
+				// Get confidence for the product
+				var confidence *float64
+				if listing.ProductID != nil {
+					_, conf, err := s.database.ComputeWeightedValuationForProduct(context.Background(), *listing.ProductID)
+					if err == nil && conf > 0 {
+						confidence = &conf
+					}
+				}
+
 				sentEmail := &models.SentEmail{
 					ListingID:        &listing.ID,
 					ListingTitle:     listing.Title,
@@ -954,6 +982,7 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 					ProductID:        listing.ProductID,
 					ProductName:      &productName,
 					Brand:            product.Brand,
+					Confidence:       confidence,
 					ScrapingRunID:    &s.scrapingRunID,
 					SearchTermID:     &searchTermID,
 					MarketplaceID:    marketplaceID,

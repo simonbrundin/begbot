@@ -165,6 +165,7 @@ export interface SentEmail {
   product_id: number | null
   product_name: string | null
   brand: string | null
+  confidence: number | null
   sent_at: string
   scraping_run_id: number | null
   search_term_id: number | null

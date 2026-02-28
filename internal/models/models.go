@@ -113,6 +113,33 @@ type Economics struct {
 	MinAds        *int  `json:"min_ads,omitempty" db:"min_ads"`
 }
 
+type EmailSettings struct {
+	ID                  int64 `json:"id" db:"id"`
+	IsActive            *bool `json:"is_active,omitempty" db:"is_active"`
+	OnlyEnabledProducts *bool `json:"only_enabled_products,omitempty" db:"only_enabled_products"`
+	MinProfitSEK        *int  `json:"min_profit_sek,omitempty" db:"min_profit_sek"`
+	MinDiscount         *int  `json:"min_discount,omitempty" db:"min_discount"`
+}
+
+type SaveSettings struct {
+	ID            int64 `json:"id" db:"id"`
+	MinConfidence *int  `json:"min_confidence,omitempty" db:"min_confidence"`
+	Value         *int  `json:"value,omitempty" db:"value"`
+	MinAds        *int  `json:"min_ads,omitempty" db:"min_ads"`
+}
+
+type EconomySettings struct {
+	ID           int64 `json:"id" db:"id"`
+	TurnoverDays *int  `json:"turnover_days,omitempty" db:"turnover_days"`
+}
+
+type AutoEnableSettings struct {
+	ID            int64 `json:"id" db:"id"`
+	MinConfidence *int  `json:"min_confidence,omitempty" db:"min_confidence"`
+	Value         *int  `json:"value,omitempty" db:"value"`
+	MinAds        *int  `json:"min_ads,omitempty" db:"min_ads"`
+}
+
 type TradedItemCandidate struct {
 	Item          TradedItem
 	EstimatedSell int
@@ -232,6 +259,7 @@ type SentEmail struct {
 	ProductID        *int64    `json:"product_id,omitempty" db:"product_id"`
 	ProductName      *string   `json:"product_name,omitempty" db:"product_name"`
 	Brand            *string   `json:"brand,omitempty" db:"brand"`
+	Confidence       *float64  `json:"confidence,omitempty" db:"confidence"`
 	SentAt           time.Time `json:"sent_at" db:"sent_at"`
 	ScrapingRunID    *int64    `json:"scraping_run_id,omitempty" db:"scraping_run_id"`
 	SearchTermID     *int64    `json:"search_term_id,omitempty" db:"search_term_id"`
