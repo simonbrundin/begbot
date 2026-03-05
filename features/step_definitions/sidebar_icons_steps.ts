@@ -17,129 +17,103 @@ Before(function () {
   nuxtConfigContent = '';
 });
 
-Given('the Nuxt frontend application', function () {
-  // App context is established
+Given('Nuxt-frontendapplikationen', function () {});
+
+When('jag kontrollerar package.json', function () {
+  try { packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')); }
+  catch { packageJson = {}; }
 });
 
-When('I check the package.json', function () {
-  try {
-    packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-  } catch {
-    packageJson = {};
-  }
+When('jag kontrollerar nuxt.config.ts', function () {
+  try { nuxtConfigContent = readFileSync(nuxtConfigPath, 'utf-8'); }
+  catch { nuxtConfigContent = ''; }
 });
 
-When('I check nuxt.config.ts', function () {
-  try {
-    nuxtConfigContent = readFileSync(nuxtConfigPath, 'utf-8');
-  } catch {
-    nuxtConfigContent = '';
-  }
+When('jag kontrollerar sidofältslayouten', function () {
+  try { layoutContent = readFileSync(layoutPath, 'utf-8'); }
+  catch { layoutContent = ''; }
 });
 
-When('I check the sidebar layout', function () {
-  try {
-    layoutContent = readFileSync(layoutPath, 'utf-8');
-  } catch {
-    layoutContent = '';
-  }
-});
-
-Then('nuxt icon module should be in devDependencies', function () {
+Then('Nuxt-ikonmodulen ska finnas i devDependencies', function () {
   assert(packageJson.devDependencies && packageJson.devDependencies['@nuxt/icon'],
-    'Expected @nuxt/icon to be in devDependencies');
+    'Förväntade @nuxt/icon i devDependencies');
 });
 
-Then('nuxt config should include the icon module', function () {
-  assert(nuxtConfigContent.includes('@nuxt/icon'),
-    'Expected nuxt.config.ts to contain @nuxt/icon');
+Then('Nuxt-konfigurationen ska inkludera ikonmodulen', function () {
+  assert(nuxtConfigContent.includes('@nuxt/icon'), 'Förväntade nuxt.config.ts att innehålla @nuxt/icon');
 });
 
-Then('lucide icon collection should be installed', function () {
+Then('Lucide-ikonsamlingen ska vara installerad', function () {
   const hasLucide = packageJson.devDependencies?.['@iconify-json/lucide'];
   const hasAll = packageJson.devDependencies?.['@iconify/json'];
-  assert(hasLucide || hasAll,
-    'Expected @iconify-json/lucide or @iconify/json to be installed');
+  assert(hasLucide || hasAll, 'Förväntade @iconify-json/lucide eller @iconify/json att vara installerad');
 });
 
-Then('it should contain a lucide:home icon', function () {
-  assert(layoutContent.match(/lucide:home|lucide:Home/),
-    'Expected layout to contain lucide:home icon');
+Then('ska den innehålla en lucide:home-ikon', function () {
+  assert(layoutContent.match(/lucide:home|lucide:Home/), 'Förväntade layouten att innehålla lucide:home-ikon');
 });
 
-Then('it should contain a lucide:package icon', function () {
-  assert(layoutContent.match(/lucide:package|lucide:Package/),
-    'Expected layout to contain lucide:package icon');
+Then('ska den innehålla en lucide:package-ikon', function () {
+  assert(layoutContent.match(/lucide:package|lucide:Package/), 'Förväntade layouten att innehålla lucide:package-ikon');
 });
 
-Then('it should contain a lucide:list icon', function () {
-  assert(layoutContent.match(/lucide:list|lucide:List/),
-    'Expected layout to contain lucide:list icon');
+Then('ska den innehålla en lucide:list-ikon', function () {
+  assert(layoutContent.match(/lucide:list|lucide:List/), 'Förväntade layouten att innehålla lucide:list-ikon');
 });
 
-Then('it should contain a lucide:arrow-left-right icon', function () {
-  assert(layoutContent.match(/lucide:arrow-left-right|lucide:ArrowLeftRight/),
-    'Expected layout to contain lucide:arrow-left-right icon');
+Then('ska den innehålla en lucide:arrow-left-right-ikon', function () {
+  assert(layoutContent.match(/lucide:arrow-left-right|lucide:ArrowLeftRight/), 'Förväntade layouten att innehålla lucide:arrow-left-right-ikon');
 });
 
-Then('it should contain a lucide:bar-chart icon', function () {
-  assert(layoutContent.match(/lucide:bar-chart|lucide:BarChart/),
-    'Expected layout to contain lucide:bar-chart icon');
+Then('ska den innehålla en lucide:bar-chart-ikon', function () {
+  assert(layoutContent.match(/lucide:bar-chart|lucide:BarChart/), 'Förväntade layouten att innehålla lucide:bar-chart-ikon');
 });
 
-Then('it should contain a lucide:spider icon', function () {
-  assert(layoutContent.match(/lucide:spider|lucide:Spider/),
-    'Expected layout to contain lucide:spider icon');
+Then('ska den innehålla en lucide:spider-ikon', function () {
+  assert(layoutContent.match(/lucide:spider|lucide:Spider/), 'Förväntade layouten att innehålla lucide:spider-ikon');
 });
 
-Then('it should contain a lucide:history icon', function () {
-  assert(layoutContent.match(/lucide:history|lucide:History/),
-    'Expected layout to contain lucide:history icon');
+Then('ska den innehålla en lucide:history-ikon', function () {
+  assert(layoutContent.match(/lucide:history|lucide:History/), 'Förväntade layouten att innehålla lucide:history-ikon');
 });
 
-Then('it should contain a lucide:megaphone icon', function () {
-  assert(layoutContent.match(/lucide:megaphone|lucide:Megaphone/),
-    'Expected layout to contain lucide:megaphone icon');
+Then('ska den innehålla en lucide:megaphone-ikon', function () {
+  assert(layoutContent.match(/lucide:megaphone|lucide:Megaphone/), 'Förväntade layouten att innehålla lucide:megaphone-ikon');
 });
 
-Then('all Icon components should have consistent size styling', function () {
+Then('ska alla ikonkomponenter ha konsekvent storleksstil', function () {
   const iconMatches = layoutContent.match(/<Icon[^>]*>/g) || [];
   if (iconMatches.length > 0) {
     const withSize = iconMatches.filter((i: string) => i.includes('size='));
     const withoutSize = iconMatches.filter((i: string) => !i.includes('size='));
     assert(withSize.length === 0 || withoutSize.length === 0,
-      'Icons should have consistent size styling (all with size or all without)');
+      'Ikoner ska ha konsekvent storleksstil');
   }
 });
 
-Then('all Icon components should not have explicit color overrides', function () {
+Then('ska inga ikonkomponenter ha explicita färgöverskridningar', function () {
   const iconMatches = layoutContent.match(/<Icon[^>]*>/g) || [];
   for (const icon of iconMatches) {
     const hasNoColor = !icon.includes('color=') && !icon.includes('style=');
     const hasInheritColor = icon.includes('currentColor');
-    assert(hasNoColor || hasInheritColor,
-      `Icon should not have explicit color override: ${icon}`);
+    assert(hasNoColor || hasInheritColor, `Ikon ska inte ha explicit färgöverskridning: ${icon}`);
   }
 });
 
-Then('the layout should contain "hover:bg-slate-700"', function () {
-  assert(layoutContent.includes('hover:bg-slate-700'),
-    'Expected layout to contain hover:bg-slate-700');
+Then('ska layouten innehålla {string}', function (expected: string) {
+  assert(layoutContent.includes(expected), `Förväntade layouten att innehålla "${expected}"`);
 });
 
-Then('the layout should contain active-class styling', function () {
-  assert(layoutContent.match(/active-class=("|')?bg-slate-700/),
-    'Expected layout to contain active-class styling');
+Then('ska layouten innehålla active-class-stilsättning', function () {
+  assert(layoutContent.match(/active-class=("|')?bg-slate-700/), 'Förväntade layouten att innehålla active-class-stilsättning');
 });
 
-Then('there should be at least {int} NuxtLink elements with icons', function (minCount: number) {
+Then('ska det finnas minst {int} NuxtLink-element med ikoner', function (minCount: number) {
   const nuxtLinkPattern = /<NuxtLink[^>]*>[\s\S]*?<Icon[^>]*>[\s\S]*?<\/NuxtLink>/g;
   const matches = layoutContent.match(nuxtLinkPattern) || [];
-  assert(matches.length >= minCount,
-    `Expected at least ${minCount} NuxtLink with icons, got ${matches.length}`);
+  assert(matches.length >= minCount, `Förväntade minst ${minCount} NuxtLink med ikoner, fick ${matches.length}`);
 });
 
-Then('it should not use remote server bundle', function () {
-  assert(!nuxtConfigContent.match(/serverBundle:\s*['"]remote['"]/),
-    'Expected nuxt.config.ts to not use remote server bundle');
+Then('ska konfigurationen inte använda fjärr-server-bundle', function () {
+  assert(!nuxtConfigContent.match(/serverBundle:\s*['"]remote['"]/), 'Förväntade att nuxt.config.ts inte använder fjärr-server-bundle');
 });

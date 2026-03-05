@@ -14,25 +14,17 @@ function isTypeActiveForProduct(productId: number, typeId: number, configsByProd
 }
 
 function computeWeightedValuation(
-  productId: number,
-  enabledTypes: { id: number }[],
-  valuationsByProduct: ValuationsByProduct,
-  weights: Weights,
-  configsByProduct: ConfigsByProduct = {}
+  productId: number, enabledTypes: { id: number }[], valuationsByProduct: ValuationsByProduct,
+  weights: Weights, configsByProduct: ConfigsByProduct = {}
 ): { average: number; safetyPercent: number } | null {
   const activeTypes = enabledTypes.filter(vt => isTypeActiveForProduct(productId, vt.id, configsByProduct));
   if (activeTypes.length === 0) return null;
-
   const vals = valuationsByProduct[productId] ?? [];
   const getVal = (typeId: number) => vals.find(v => v.valuation_type_id === typeId) ?? null;
-
-  const entries = activeTypes
-    .map(vt => {
-      const v = getVal(vt.id);
-      return v !== null ? { valuation: v.valuation, weight: weights[vt.id] ?? 1 } : null;
-    })
-    .filter((e): e is { valuation: number; weight: number } => e !== null);
-
+  const entries = activeTypes.map(vt => {
+    const v = getVal(vt.id);
+    return v !== null ? { valuation: v.valuation, weight: weights[vt.id] ?? 1 } : null;
+  }).filter((e): e is { valuation: number; weight: number } => e !== null);
   if (entries.length === 0) return null;
   const totalWeight = entries.reduce((s, e) => s + e.weight, 0);
   if (totalWeight === 0) return null;
@@ -63,59 +55,59 @@ Before(function () {
   computeResult = null;
 });
 
-Given('no valuation configs exist for product {int}', function (_productId: number) {
+Given('inga värderingskonfigurationer finns för produkt {int}', function (_productId: number) {
   configsByProduct = {};
 });
 
-Given('an empty config list for product {int}', function (productId: number) {
+Given('en tom konfigurationslista för produkt {int}', function (productId: number) {
   configsByProduct = { [productId]: [] };
 });
 
-Given('a config that only deactivates type {int} for product {int}', function (typeId: number, productId: number) {
+Given('en konfiguration som bara inaktiverar typ {int} för produkt {int}', function (typeId: number, productId: number) {
   configsByProduct = { [productId]: [{ product_id: productId, valuation_type_id: typeId, is_active: false }] };
 });
 
-Given('a config that deactivates type {int} for product {int}', function (typeId: number, productId: number) {
+Given('en konfiguration som inaktiverar typ {int} för produkt {int}', function (typeId: number, productId: number) {
   configsByProduct = { [productId]: [{ product_id: productId, valuation_type_id: typeId, is_active: false }] };
 });
 
-Given('a config that activates type {int} for product {int}', function (typeId: number, productId: number) {
+Given('en konfiguration som aktiverar typ {int} för produkt {int}', function (typeId: number, productId: number) {
   configsByProduct = { [productId]: [{ product_id: productId, valuation_type_id: typeId, is_active: true }] };
 });
 
-When('I check if type {int} is active for product {int}', function (typeId: number, productId: number) {
+When('jag kontrollerar om typ {int} är aktiv för produkt {int}', function (typeId: number, productId: number) {
   isActiveResult = isTypeActiveForProduct(productId, typeId, configsByProduct);
 });
 
-Then('it should be active', function () {
-  assert(isActiveResult, 'Expected type to be active');
+Then('ska den vara aktiv', function () {
+  assert(isActiveResult, 'Förväntade att typen är aktiv');
 });
 
-Then('it should be inactive', function () {
-  assert(!isActiveResult, 'Expected type to be inactive');
+Then('ska den vara inaktiv', function () {
+  assert(!isActiveResult, 'Förväntade att typen är inaktiv');
 });
 
-Given('no enabled valuation types', function () {
+Given('inga aktiverade värderingstyper', function () {
   enabledTypes = [];
 });
 
-Given('enabled types: {int}', function (t1: number) {
+Given('aktiverade typer: {int}', function (t1: number) {
   enabledTypes = [{ id: t1 }];
 });
 
-Given('enabled types: {int}, {int}', function (t1: number, t2: number) {
+Given('aktiverade typer: {int}, {int}', function (t1: number, t2: number) {
   enabledTypes = [{ id: t1 }, { id: t2 }];
 });
 
-Given('enabled types: {int}, {int}, {int}', function (t1: number, t2: number, t3: number) {
+Given('aktiverade typer: {int}, {int}, {int}', function (t1: number, t2: number, t3: number) {
   enabledTypes = [{ id: t1 }, { id: t2 }, { id: t3 }];
 });
 
-Given('product {int} has no valuations', function (productId: number) {
+Given('produkt {int} saknar värderingar', function (productId: number) {
   valuationsByProduct = { [productId]: [] };
 });
 
-Given('product {int} has valuation {int} for type {int} and {int} for type {int}', function (productId: number, val1: number, type1: number, val2: number, type2: number) {
+Given('produkt {int} har värderingen {int} för typ {int} och {int} för typ {int}', function (productId: number, val1: number, type1: number, val2: number, type2: number) {
   valuationsByProduct = {
     [productId]: [
       { valuation_type_id: type1, valuation: val1 },
@@ -124,40 +116,29 @@ Given('product {int} has valuation {int} for type {int} and {int} for type {int}
   };
 });
 
-Given('product {int} has only valuation {int} for type {int}', function (productId: number, val: number, typeId: number) {
+Given('produkt {int} har bara värderingen {int} för typ {int}', function (productId: number, val: number, typeId: number) {
   valuationsByProduct = { [productId]: [{ valuation_type_id: typeId, valuation: val }] };
 });
 
-Given('product {int} has valuation {int} for type {int} and {int} for type {int} with weight {int}', function (productId: number, val1: number, type1: number, val2: number, type2: number) {
-  valuationsByProduct = {
-    [productId]: [
-      { valuation_type_id: type1, valuation: val1 },
-      { valuation_type_id: type2, valuation: val2 },
-    ],
-  };
-});
-
-Given('product {int} has valuation {int} for type {int} with weight {int}', function (productId: number, val: number, typeId: number, weight: number) {
+Given('produkt {int} har värderingen {int} för typ {int} med vikten {int}', function (productId: number, val: number, typeId: number, weight: number) {
   valuationsByProduct = { [productId]: [{ valuation_type_id: typeId, valuation: val }] };
   weights = { [typeId]: weight };
 });
 
-Given('both types have weight {int}', function (weight: number) {
-  for (const t of enabledTypes) {
-    weights[t.id] = weight;
-  }
+Given('båda typerna har vikten {int}', function (weight: number) {
+  for (const t of enabledTypes) { weights[t.id] = weight; }
 });
 
-Given('type {int} has weight {int} and type {int} has weight {int}', function (t1: number, w1: number, t2: number, w2: number) {
+Given('typ {int} har vikten {int} och typ {int} har vikten {int}', function (t1: number, w1: number, t2: number, w2: number) {
   weights = { [t1]: w1, [t2]: w2 };
 });
 
-Given('type {int} is deactivated for product {int}', function (typeId: number, productId: number) {
+Given('typ {int} är inaktiverad för produkt {int}', function (typeId: number, productId: number) {
   if (!configsByProduct[productId]) configsByProduct[productId] = [];
   configsByProduct[productId].push({ product_id: productId, valuation_type_id: typeId, is_active: false });
 });
 
-Given('both type {int} and type {int} are deactivated for product {int}', function (t1: number, t2: number, productId: number) {
+Given('både typ {int} och typ {int} är inaktiverade för produkt {int}', function (t1: number, t2: number, productId: number) {
   configsByProduct = {
     [productId]: [
       { product_id: productId, valuation_type_id: t1, is_active: false },
@@ -166,19 +147,20 @@ Given('both type {int} and type {int} are deactivated for product {int}', functi
   };
 });
 
-Given('no configs exist', function () {
+Given('inga konfigurationer finns', function () {
   configsByProduct = {};
 });
 
-Given('types {int} and {int} are deactivated for product {int}', function (t1: number, t2: number, productId: number) {
-  if (!configsByProduct[productId]) configsByProduct[productId] = [];
-  configsByProduct[productId] = [
-    { product_id: productId, valuation_type_id: t1, is_active: false },
-    { product_id: productId, valuation_type_id: t2, is_active: false },
-  ];
+Given('typ {int} och typ {int} är inaktiverade för produkt {int}', function (t1: number, t2: number, productId: number) {
+  configsByProduct = {
+    [productId]: [
+      { product_id: productId, valuation_type_id: t1, is_active: false },
+      { product_id: productId, valuation_type_id: t2, is_active: false },
+    ],
+  };
 });
 
-Given('product {int} has valuation {int} for type {int}, {int} for type {int}, {int} for type {int}', function (productId: number, val1: number, t1: number, val2: number, t2: number, val3: number, t3: number) {
+Given('produkt {int} har värderingen {int} för typ {int}, {int} för typ {int}, {int} för typ {int}', function (productId: number, val1: number, t1: number, val2: number, t2: number, val3: number, t3: number) {
   valuationsByProduct = {
     [productId]: [
       { valuation_type_id: t1, valuation: val1 },
@@ -188,28 +170,25 @@ Given('product {int} has valuation {int} for type {int}, {int} for type {int}, {
   };
 });
 
-When('I compute weighted valuation for product {int}', function (productId: number) {
+When('jag beräknar viktad värdering för produkt {int}', function (productId: number) {
   computeResult = computeWeightedValuation(productId, enabledTypes, valuationsByProduct, weights, configsByProduct);
 });
 
-Then('the result should be null', function () {
-  assert(computeResult === null, `Expected null, got ${JSON.stringify(computeResult)}`);
+Then('ska resultatet vara null', function () {
+  assert(computeResult === null, `Förväntade null, fick ${JSON.stringify(computeResult)}`);
 });
 
-Then('the average should be {int}', function (expected: number) {
-  assert(computeResult !== null, 'Expected non-null result');
-  assert.strictEqual(computeResult!.average, expected,
-    `Expected average ${expected}, got ${computeResult!.average}`);
+Then('ska genomsnittet vara {int}', function (expected: number) {
+  assert(computeResult !== null, 'Förväntade icke-null resultat');
+  assert.strictEqual(computeResult!.average, expected, `Förväntade genomsnitt ${expected}, fick ${computeResult!.average}`);
 });
 
-Then('the safety percent should be {int}', function (expected: number) {
-  assert(computeResult !== null, 'Expected non-null result');
-  assert.strictEqual(computeResult!.safetyPercent, expected,
-    `Expected safety ${expected}, got ${computeResult!.safetyPercent}`);
+Then('ska säkerhetsprocenten vara {int}', function (expected: number) {
+  assert(computeResult !== null, 'Förväntade icke-null resultat');
+  assert.strictEqual(computeResult!.safetyPercent, expected, `Förväntade säkerhet ${expected}, fick ${computeResult!.safetyPercent}`);
 });
 
-Then('the safety percent should be less than {int}', function (max: number) {
-  assert(computeResult !== null, 'Expected non-null result');
-  assert(computeResult!.safetyPercent < max,
-    `Expected safety < ${max}, got ${computeResult!.safetyPercent}`);
+Then('ska säkerhetsprocenten vara lägre än {int}', function (max: number) {
+  assert(computeResult !== null, 'Förväntade icke-null resultat');
+  assert(computeResult!.safetyPercent < max, `Förväntade säkerhet < ${max}, fick ${computeResult!.safetyPercent}`);
 });

@@ -1,7 +1,6 @@
 import { Given, When, Then, Before } from '@cucumber/cucumber';
 import assert from 'assert';
 
-// State for ads filtering
 interface ListingItem {
   id: number;
   price: number | null;
@@ -24,12 +23,12 @@ Before(function () {
   filtered = [];
 });
 
-Given('I have a listing filter service', function () {
+Given('jag har en annonsfiltreringstjänst', function () {
   listings = [];
   filtered = [];
 });
 
-Given('the following listings:', function (table: any) {
+Given('följande annonser:', function (table: any) {
   listings = [];
   for (const row of table.rows()) {
     const id = parseInt(row[0]);
@@ -39,14 +38,14 @@ Given('the following listings:', function (table: any) {
   }
 });
 
-Given('there are no listings', function () {
+Given('det finns inga annonser', function () {
   listings = [];
 });
 
-When('I filter by {string} tab', function (tab: string) {
+When('jag filtrerar på fliken {string}', function (tab: string) {
   filtered = filterListings(listings, tab);
 });
 
-Then('I should receive {int} listings', function (count: number) {
-  assert.strictEqual(filtered.length, count, `Expected ${count} listings, got ${filtered.length}`);
+Then('ska jag få {int} annonser', function (count: number) {
+  assert.strictEqual(filtered.length, count, `Förväntade ${count} annonser, fick ${filtered.length}`);
 });

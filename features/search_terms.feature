@@ -1,35 +1,35 @@
-Feature: Search Terms Service
-  As a scraper system
-  I want to manage and use search terms for marketplace searches
-  So that I can find relevant product listings
+Feature: Söktermstjänst
+  Som ett skrapningssystem
+  Vill jag hantera och använda söktermer för marknadsplatssökningar
+  Så att jag kan hitta relevanta annonser
 
-  Scenario: Create a valid search term with marketplace
-    Given a search term with description "iPhone Search" and URL "https://blocket.se/?q=iphone"
-    And the search term is linked to marketplace ID 1
-    Then the description should be "iPhone Search"
-    And the URL should not be empty
-    And the marketplace ID should be 1
+  Scenario: Skapa en giltig sökterm med marknadsplats
+    Given en sökterm med beskrivningen "iPhone Search" och URL:en "https://blocket.se/?q=iphone"
+    And söktermen är kopplad till marknadsplats-ID 1
+    Then ska beskrivningen vara "iPhone Search"
+    And URL:en ska inte vara tom
+    And marknadsplats-ID:et ska vara 1
 
-  Scenario: Create a search job with marketplace
-    Given a search term "iPhone" linked to Blocket marketplace
-    When creating a search job
-    Then the job URL should not be empty
-    And the marketplace should not be nil
+  Scenario: Skapa ett sökjobb med marknadsplats
+    Given en sökterm "iPhone" kopplad till Blocket-marknadsplatsen
+    When ett sökjobb skapas
+    Then jobbets URL ska inte vara tom
+    And marknadsplatsen ska inte vara null
 
-  Scenario: Search job for Tradera marketplace
-    Given a search term "Lego Star Wars" linked to Tradera marketplace
-    When creating a search job
-    Then the marketplace name should be "Tradera"
+  Scenario: Sökjobb för Tradera-marknadsplats
+    Given en sökterm "Lego Star Wars" kopplad till Tradera-marknadsplatsen
+    When ett sökjobb skapas
+    Then marknadsplatsens namn ska vara "Tradera"
 
-  Scenario: Inactive search term
-    Given a search term with isActive false
-    Then the search term should be inactive
+  Scenario: Inaktiv sökterm
+    Given en sökterm med isActive false
+    Then ska söktermen vara inaktiv
 
-  Scenario: Search term without marketplace
-    Given a search term with no marketplace ID
-    Then the marketplace ID should be null
+  Scenario: Sökterm utan marknadsplats
+    Given en sökterm utan marknadsplats-ID
+    Then ska marknadsplats-ID:et vara null
 
-  Scenario: Service accepts context
-    Given a search term service
-    When passing a context
-    Then no error should occur
+  Scenario: Tjänsten accepterar kontext
+    Given en söktermstjänst
+    When en kontext skickas
+    Then ska inget fel inträffa

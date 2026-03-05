@@ -14,54 +14,52 @@ Before(function () {
   conditionResult = { isIntact: false, hasMinorScratches: false, issuesFound: [], reasoning: '' };
 });
 
-Given('a product condition result with isIntact true and no scratches', function () {
+Given('ett produkttillståndsresultat med isIntact true och inga repor', function () {
   conditionResult = { isIntact: true, hasMinorScratches: false, issuesFound: [], reasoning: 'Produkten är i bra skick' };
 });
 
-Given('no issues found', function () {
+Given('inga problem hittades', function () {
   conditionResult.issuesFound = [];
 });
 
-Given('issues found: {string}, {string}', function (issue1: string, issue2: string) {
+Given('problem hittades: {string}, {string}', function (issue1: string, issue2: string) {
   conditionResult.issuesFound = [issue1, issue2];
 });
 
-Given('a product condition result with isIntact false', function () {
+Given('ett produkttillståndsresultat med isIntact false', function () {
   conditionResult = { isIntact: false, hasMinorScratches: false, issuesFound: [], reasoning: 'Produkten har skador' };
 });
 
-Given('a product condition result with isIntact true and minor scratches', function () {
-  conditionResult = { isIntact: true, hasMinorScratches: true, issuesFound: [], reasoning: 'Endast mindre repor' };
+Given('ett produkttillståndsresultat med isIntact true och smärre repor', function () {
+  conditionResult = { isIntact: true, hasMinorScratches: true, issuesFound: [], reasoning: 'Endast smärre repor' };
 });
 
-Given('a product with isIntact true and no scratches', function () {
+Given('en produkt med isIntact true och inga repor', function () {
   conditionResult = { isIntact: true, hasMinorScratches: false, issuesFound: [], reasoning: '' };
 });
 
-Given('a product with isIntact true and minor scratches', function () {
+Given('en produkt med isIntact true och smärre repor', function () {
   conditionResult = { isIntact: true, hasMinorScratches: true, issuesFound: [], reasoning: '' };
 });
 
-Given('a product with isIntact false and issues {string}', function (issue: string) {
+Given('en produkt med isIntact false och problem {string}', function (issue: string) {
   conditionResult = { isIntact: false, hasMinorScratches: false, issuesFound: [issue], reasoning: '' };
 });
 
-When('evaluating purchase validity', function () {
-  // Validity is already set in the Given steps
+When('köpgiltigheten utvärderas', function () {});
+
+Then('ska produkten vara giltig för köp', function () {
+  assert(conditionResult.isIntact, 'Produkten ska vara hel (giltig för köp)');
 });
 
-Then('the product should be valid for purchase', function () {
-  assert(conditionResult.isIntact, 'Product should be intact (valid for purchase)');
+Then('ska produkten inte vara giltig för köp', function () {
+  assert(!conditionResult.isIntact, 'Produkten ska inte vara hel');
 });
 
-Then('the product should not be valid for purchase', function () {
-  assert(!conditionResult.isIntact, 'Product should not be intact');
-});
-
-Then('there should be {int} issues found', function (expected: number) {
+Then('det ska ha hittats {int} problem', function (expected: number) {
   assert.strictEqual(conditionResult.issuesFound.length, expected);
 });
 
-Then('the minor scratches flag should be true', function () {
-  assert(conditionResult.hasMinorScratches, 'Expected hasMinorScratches to be true');
+Then('flaggan för smärre repor ska vara true', function () {
+  assert(conditionResult.hasMinorScratches, 'Förväntade hasMinorScratches att vara true');
 });

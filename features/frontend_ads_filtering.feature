@@ -1,28 +1,28 @@
-Feature: Frontend Ads Filtering
-  As a user viewing the ads page
-  I want to filter listings by tab
-  So that I can see all listings or only those with potential profit
+Feature: Annonsfiltrering i frontend
+  Som en användare som tittar på annonssidan
+  Vill jag filtrera annonser via flik
+  Så att jag kan se alla annonser eller enbart de med potential vinst
 
-  Scenario: Show all listings in "Alla" tab
-    Given frontend listings exist with various prices and valuations
-    When I apply the frontend filter "all"
-    Then all frontend listings should be returned
+  Scenario: Visa alla annonser i fliken "Alla"
+    Given frontend-annonser finns med varierande priser och värderingar
+    When jag applicerar frontend-filtret "all"
+    Then ska alla frontend-annonser returneras
 
-  Scenario: Empty result when no listings exist
-    Given no frontend listings exist
-    When I apply the frontend filter "all"
-    Then 0 frontend listings should be returned
+  Scenario: Tomt resultat när inga annonser finns
+    Given inga frontend-annonser finns
+    When jag applicerar frontend-filtret "all"
+    Then ska 0 frontend-annonser returneras
 
-  Scenario: Show only profitable listings in "Potentiella" tab
-    Given frontend listings with profit data:
+  Scenario: Visa bara lönsamma annonser i fliken "Potentiella"
+    Given frontend-annonser med vinstdata:
       | id | potentialProfit | discountPercent |
       | 1  | 200             | 20              |
       | 2  | -100            | -10             |
-    When I apply the frontend filter "potential"
-    Then 1 frontend listing should be returned
-    And the returned frontend listing should have id 1
+    When jag applicerar frontend-filtret "potential"
+    Then ska 1 frontend-annons returneras
+    And den returnerade frontend-annonsen ska ha id 1
 
-  Scenario: Return empty when no listings have positive potential profit
-    Given a frontend listing with id 1 and no potential profit data
-    When I apply the frontend filter "potential"
-    Then 0 frontend listings should be returned
+  Scenario: Returnera tomt när inga annonser har positiv potential vinst
+    Given en frontend-annons med id 1 och ingen vinstdata
+    When jag applicerar frontend-filtret "potential"
+    Then ska 0 frontend-annonser returneras

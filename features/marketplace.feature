@@ -1,53 +1,53 @@
-Feature: Marketplace
+Feature: Marknadsplats
 
   Background:
-    Given a marketplace service is available
-    And the configuration has blocket enabled
+    Given en marknadsplatstjänst är tillgänglig
+    And konfigurationen har Blocket aktiverat
 
-  Scenario: Extract valid Blocket ad ID from URL
-    Given the URL "https://www.blocket.se/annons/123456"
-    When extracting the ad ID
-    Then the ad ID should be 123456
+  Scenario: Extrahera giltigt Blocket annons-ID från URL
+    Given URL:en "https://www.blocket.se/annons/123456"
+    When annons-ID:et extraheras
+    Then ska annons-ID:et vara 123456
 
-  Scenario: Extract Blocket ad ID from URL with query params
-    Given the URL "https://www.blocket.se/annons/123456?q=test"
-    When extracting the ad ID
-    Then the ad ID should be 123456
+  Scenario: Extrahera Blocket annons-ID från URL med frågeparametrar
+    Given URL:en "https://www.blocket.se/annons/123456?q=test"
+    When annons-ID:et extraheras
+    Then ska annons-ID:et vara 123456
 
-  Scenario: Extract valid Blocket ad ID from alternative URL format
-    Given the URL "https://www.blocket.se/item/999999"
-    When extracting the ad ID
-    Then the ad ID should be 999999
+  Scenario: Extrahera giltigt Blocket annons-ID från alternativt URL-format
+    Given URL:en "https://www.blocket.se/item/999999"
+    When annons-ID:et extraheras
+    Then ska annons-ID:et vara 999999
 
-  Scenario: Handle invalid URL
-    Given an invalid URL "invalid"
-    When extracting the ad ID
-    Then the ad ID should be 0
+  Scenario: Hantera ogiltig URL
+    Given en ogiltig URL "invalid"
+    When annons-ID:et extraheras
+    Then ska annons-ID:et vara 0
 
-  Scenario: Handle non-Blocket URL
-    Given a non-Blocket URL "https://www.blocket.se/other/123"
-    When extracting the ad ID
-    Then the ad ID should be 0
+  Scenario: Hantera URL som inte är från Blocket
+    Given en icke-Blocket URL "https://www.blocket.se/other/123"
+    When annons-ID:et extraheras
+    Then ska annons-ID:et vara 0
 
-  Scenario: Rate limiting between requests
-    Given the rate limiter is reset
-    When making 5 consecutive requests
-    Then the requests should take at least 1 second
-    And no rate limit errors should occur
+  Scenario: Hastighetsbegränsning mellan förfrågningar
+    Given hastighetsbegränsaren nollställs
+    When 5 förfrågningar görs i följd
+    Then ska förfrågningarna ta minst 1 sekund
+    And inga hastighetsbegränsningsfel ska inträffa
 
-  Scenario: Fetch Blocket ad from API with valid ID
-    Given a valid Blocket ad ID
-    When fetching the ad from the API
-    Then the response should contain a title
-    And the response should contain ad text
-    And the price should be greater than 0
+  Scenario: Hämta Blocket-annons från API med giltigt ID
+    Given ett giltigt Blocket annons-ID
+    When annonsen hämtas från API:et
+    Then ska svaret innehålla en rubrik
+    And ska svaret innehålla annonstext
+    And priset ska vara större än 0
 
-  Scenario: Fetch Blocket ad from API with invalid ID
-    Given an invalid Blocket ad ID 999999999
-    When fetching the ad from the API
-    Then an error may be returned for invalid IDs
+  Scenario: Hämta Blocket-annons från API med ogiltigt ID
+    Given ett ogiltigt Blocket annons-ID 999999999
+    When annonsen hämtas från API:et
+    Then kan ett fel returneras för ogiltiga ID:n
 
-  Scenario: Handle rate limit errors gracefully
-    Given the API returns a rate limit error
-    When retrying the request
-    Then the request should eventually succeed
+  Scenario: Hantera hastighetsbegränsningsfel på ett smidigt sätt
+    Given API:et returnerar ett hastighetsbegränsningsfel
+    When förfrågan försöks igen
+    Then ska omförsöket lyckas

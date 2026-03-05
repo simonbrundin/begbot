@@ -1,9 +1,7 @@
 import { Given, When, Then, Before } from '@cucumber/cucumber';
 import assert from 'assert';
 
-// Marketplace service logic (TypeScript implementation of Go service)
 function extractBlocketAdID(url: string): number {
-  // Match patterns like /annons/123456 or /item/123456
   const match = url.match(/\/(annons|item)\/(\d+)/);
   if (!match) return 0;
   return parseInt(match[2]);
@@ -30,112 +28,88 @@ Before(function () {
   state = { adID: 0, requestCount: 0 };
 });
 
-Given('a marketplace service is available', function () {
+Given('en marknadsplatstjänst är tillgänglig', function () {
   state = { adID: 0, requestCount: 0 };
 });
 
-Given('the configuration has blocket enabled', function () {
-  // Configuration is enabled by default in tests
-});
+Given('konfigurationen har Blocket aktiverat', function () {});
 
-Given('the URL {string}', function (url: string) {
+Given('URL:en {string}', function (url: string) {
   state.adID = extractBlocketAdID(url);
 });
 
-When('extracting the ad ID', function () {
-  // Already extracted in Given step
-});
+When('annons-ID:et extraheras', function () {});
 
-Then('the ad ID should be {int}', function (expected: number) {
+Then('ska annons-ID:et vara {int}', function (expected: number) {
   assert.strictEqual(state.adID, expected);
 });
 
-Given('an invalid URL {string}', function (url: string) {
+Given('en ogiltig URL {string}', function (url: string) {
   state.adID = extractBlocketAdID(url);
 });
 
-Given('a non-Blocket URL {string}', function (url: string) {
+Given('en icke-Blocket URL {string}', function (url: string) {
   state.adID = extractBlocketAdID(url);
 });
 
-Given('the rate limiter is reset', function () {
+Given('hastighetsbegränsaren nollställs', function () {
   state.requestCount = 0;
 });
 
-When('making {int} consecutive requests', function (count: number) {
-  const start = Date.now();
-  // Simulate rate limiting: each request after the first adds a delay
+When('{int} förfrågningar görs i följd', function (count: number) {
   const minDelay = (1000 / maxRequestsPerSecond) * (count - 1);
-  // In tests we just simulate the timing check
   state.elapsed = minDelay;
   state.requestCount = count;
   state.error = null;
-  void start; // suppress unused warning
 });
 
-Then('the requests should take at least {int} second', function (seconds: number) {
+Then('ska förfrågningarna ta minst {int} sekund', function (seconds: number) {
   const minMs = seconds * 1000;
-  // We simulate that 5 consecutive requests at 1 req/sec takes at least 4 seconds
   assert(state.elapsed !== undefined && state.elapsed >= minMs - 1000,
-    `Expected elapsed >= ${minMs}ms, got ${state.elapsed}ms`);
+    `Förväntade elapsed >= ${minMs}ms, fick ${state.elapsed}ms`);
 });
 
-Then('no rate limit errors should occur', function () {
-  assert(state.error === null || state.error === undefined, `Unexpected error: ${state.error}`);
+Then('inga hastighetsbegränsningsfel ska inträffa', function () {
+  assert(state.error === null || state.error === undefined, `Oväntat fel: ${state.error}`);
 });
 
-Given('a valid Blocket ad ID', function () {
+Given('ett giltigt Blocket annons-ID', function () {
   state.adID = 124456789;
 });
 
-When('fetching the ad from the API', function () {
-  // Simulated API call - in tests we use mock data
+When('annonsen hämtas från API:et', function () {
   state.details = null;
   state.error = null;
-  // For simulation, assume fetch could fail for unknown IDs
 });
 
-Then('the response should contain a title', function () {
-  // Simulated: in real tests this would make an actual API call
-  // Since we cannot make real HTTP calls in this test environment, we mark as passed
-  assert(true, 'Simulated: title check passed');
+Then('ska svaret innehålla en rubrik', function () {
+  assert(true, 'Simulerat: rubrikcheck godkänt');
 });
 
-Then('the response should contain ad text', function () {
-  assert(true, 'Simulated: ad text check passed');
+Then('ska svaret innehålla annonstext', function () {
+  assert(true, 'Simulerat: annonstextcheck godkänt');
 });
 
-Then('the price should be greater than {int}', function (_minPrice: number) {
-  assert(true, 'Simulated: price check passed');
+Then('priset ska vara större än {int}', function (_minPrice: number) {
+  assert(true, 'Simulerat: priskontroll godkänd');
 });
 
-Given('an invalid Blocket ad ID {int}', function (id: number) {
+Given('ett ogiltigt Blocket annons-ID {int}', function (id: number) {
   state.adID = id;
 });
 
-Then('an error may be returned for invalid IDs', function () {
-  // Error is acceptable for invalid IDs
-  assert(true, 'Error may occur for invalid IDs - this is expected');
+Then('kan ett fel returneras för ogiltiga ID:n', function () {
+  assert(true, 'Fel kan förekomma för ogiltiga ID:n - detta är förväntat');
 });
 
-Given('the API returns a rate limit error', function () {
-  state.error = new Error('rate limit exceeded');
+Given('API:et returnerar ett hastighetsbegränsningsfel', function () {
+  state.error = new Error('hastighetsbegränsning överskriden');
 });
 
-When('retrying the request', function () {
-  // Simulate retry
+When('förfrågan försöks igen', function () {
   state.error = null;
 });
 
-Then('the request should eventually succeed', function () {
-  assert(true, 'Simulated: retry succeeded');
-});
-
-Then('Or return a rate limit exceeded error', function () {
-  // This is an alternative outcome
-  assert(true, 'Rate limit exceeded is also acceptable');
-});
-
-Then('the marketplace request should succeed', function () {
-  assert(state.error === null || state.error === undefined, `Expected no error, got: ${state.error}`);
+Then('ska omförsöket lyckas', function () {
+  assert(true, 'Simulerat: omförsök lyckades');
 });

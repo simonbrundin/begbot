@@ -10,32 +10,16 @@ interface ValuationTypeConfig {
 function normalizeWeights(configs: ValuationTypeConfig[]): ValuationTypeConfig[] {
   const result = configs.map(c => ({ ...c }));
   const active = result.filter(c => c.active);
-  
-  // Set inactive weights to 0
-  for (const c of result) {
-    if (!c.active) c.weight = 0;
-  }
-  
-  if (active.length === 0) {
-    for (const c of result) c.weight = 0;
-    return result;
-  }
-  
-  // If any active type has weight 0, redistribute equally
+  for (const c of result) { if (!c.active) c.weight = 0; }
+  if (active.length === 0) { for (const c of result) c.weight = 0; return result; }
   const hasZeroWeight = active.some(c => c.weight === 0);
   if (hasZeroWeight) {
     const equalShare = 100 / active.length;
-    for (const c of result) {
-      if (c.active) c.weight = equalShare;
-    }
+    for (const c of result) { if (c.active) c.weight = equalShare; }
     return result;
   }
-  
-  // Normalize existing weights to sum to 100
   const totalWeight = active.reduce((sum, c) => sum + c.weight, 0);
-  for (const c of result) {
-    if (c.active) c.weight = (c.weight / totalWeight) * 100;
-  }
+  for (const c of result) { if (c.active) c.weight = (c.weight / totalWeight) * 100; }
   return result;
 }
 
@@ -49,83 +33,75 @@ Before(function () {
   originalWeights = [];
 });
 
-Given('{int} active valuation types with weight {int} each', function (count: number, weight: number) {
+Given('{int} aktiva värderingstyper med vikten {int} var', function (count: number, weight: number) {
   inputConfigs = Array.from({ length: count }, (_, i) => ({ type: i + 1, active: true, weight }));
 });
 
-Given('valuation types:', function (table: any) {
+Given('värderingstyper:', function (table: any) {
   inputConfigs = [];
   for (const row of table.rows()) {
-    inputConfigs.push({
-      type: parseInt(row[0]),
-      active: row[1] === 'true',
-      weight: parseFloat(row[2]),
-    });
+    inputConfigs.push({ type: parseInt(row[0]), active: row[1] === 'true', weight: parseFloat(row[2]) });
   }
 });
 
-Given('{int} active valuation type with weight {int}', function (_count: number, weight: number) {
+Given('{int} aktiv värderingstyp med vikten {int}', function (_count: number, weight: number) {
   inputConfigs = [{ type: 1, active: true, weight }];
 });
 
-When('I normalize the weights', function () {
+When('jag normaliserar vikterna', function () {
   originalWeights = inputConfigs.map(c => c.weight);
   normalizedConfigs = normalizeWeights(inputConfigs);
 });
 
-Then('each active type should have weight approximately {float}', function (expected: number) {
+Then('ska varje aktiv typ ha vikten ungefär {float}', function (expected: number) {
   for (const c of normalizedConfigs) {
     if (c.active) {
-      assert(Math.abs(c.weight - expected) < 0.01,
-        `Expected weight ~${expected}, got ${c.weight}`);
+      assert(Math.abs(c.weight - expected) < 0.01, `Förväntade vikt ~${expected}, fick ${c.weight}`);
     }
   }
 });
 
-Then('the sum of active weights should be {int}', function (expected: number) {
+Then('ska summan av aktiva vikter vara {int}', function (expected: number) {
   const sum = normalizedConfigs.filter(c => c.active).reduce((s, c) => s + c.weight, 0);
-  assert(Math.abs(sum - expected) < 0.001, `Expected sum ${expected}, got ${sum}`);
+  assert(Math.abs(sum - expected) < 0.001, `Förväntade summa ${expected}, fick ${sum}`);
 });
 
-Then('the inactive type weight should be {int}', function (expected: number) {
+Then('den inaktiva typens vikt ska vara {int}', function (expected: number) {
   for (const c of normalizedConfigs) {
-    if (!c.active) {
-      assert.strictEqual(c.weight, expected);
-    }
+    if (!c.active) assert.strictEqual(c.weight, expected);
   }
 });
 
-Then('type {int} should have weight {int}', function (typeNum: number, expected: number) {
+Then('ska typ {int} ha vikten {int}', function (typeNum: number, expected: number) {
   const config = normalizedConfigs.find(c => c.type === typeNum);
-  assert(config !== undefined, `Type ${typeNum} not found`);
+  assert(config !== undefined, `Typ ${typeNum} hittades inte`);
   assert(Math.abs(config!.weight - expected) < 0.001,
-    `Expected type ${typeNum} weight ${expected}, got ${config!.weight}`);
+    `Förväntade typ ${typeNum} vikt ${expected}, fick ${config!.weight}`);
 });
 
-Then('all active types should have equal weight approximately {float}', function (expected: number) {
+Then('ska alla aktiva typer ha lika vikt ungefär {float}', function (expected: number) {
   for (const c of normalizedConfigs) {
     if (c.active) {
-      assert(Math.abs(c.weight - expected) < 0.01,
-        `Expected weight ~${expected}, got ${c.weight}`);
+      assert(Math.abs(c.weight - expected) < 0.01, `Förväntade vikt ~${expected}, fick ${c.weight}`);
     }
   }
 });
 
-Then('all types should have weight {int}', function (expected: number) {
+Then('ska alla typer ha vikten {int}', function (expected: number) {
   for (const c of normalizedConfigs) {
-    assert.strictEqual(c.weight, expected, `Expected weight ${expected}, got ${c.weight}`);
+    assert.strictEqual(c.weight, expected, `Förväntade vikt ${expected}, fick ${c.weight}`);
   }
 });
 
-Then('that type should have weight {int}', function (expected: number) {
-  assert(normalizedConfigs.length > 0, 'No configs');
+Then('ska den typen ha vikten {int}', function (expected: number) {
+  assert(normalizedConfigs.length > 0, 'Inga konfigurationer');
   assert(Math.abs(normalizedConfigs[0].weight - expected) < 0.001,
-    `Expected weight ${expected}, got ${normalizedConfigs[0].weight}`);
+    `Förväntade vikt ${expected}, fick ${normalizedConfigs[0].weight}`);
 });
 
-Then('the original input weights should be unchanged', function () {
+Then('ska de ursprungliga indata-vikterna vara oförändrade', function () {
   for (let i = 0; i < inputConfigs.length; i++) {
     assert.strictEqual(inputConfigs[i].weight, originalWeights[i],
-      `Expected original weight ${originalWeights[i]} to be unchanged, got ${inputConfigs[i].weight}`);
+      `Förväntade ursprunglig vikt ${originalWeights[i]} att vara oförändrad, fick ${inputConfigs[i].weight}`);
   }
 });

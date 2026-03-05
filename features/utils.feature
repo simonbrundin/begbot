@@ -1,35 +1,35 @@
-Feature: Utility Functions
-  As a frontend application
-  I want utility functions for formatting and calculation
-  So that I can display data consistently
+Feature: Hjälpfunktioner
+  Som en frontendapplikation
+  Vill jag ha hjälpfunktioner för formatering och beräkning
+  Så att jag kan visa data på ett konsekvent sätt
 
-  Scenario: Format öre to kronor correctly
-    Given the amount 10000 öre
-    When I format it as currency
-    Then the result should be "100.00 kr"
+  Scenario: Formatera öre till kronor korrekt
+    Given beloppet 10000 öre
+    When jag formaterar det som valuta
+    Then ska resultatet vara "100.00 kr"
 
-  Scenario: Format small amount to kronor
-    Given the amount 500 öre
-    When I format it as currency
-    Then the result should be "5.00 kr"
+  Scenario: Formatera litet belopp till kronor
+    Given beloppet 500 öre
+    When jag formaterar det som valuta
+    Then ska resultatet vara "5.00 kr"
 
-  Scenario: Format zero amount
-    Given the amount 0 öre
-    When I format it as currency
-    Then the result should be "0.00 kr"
+  Scenario: Formatera nollt belopp
+    Given beloppet 0 öre
+    When jag formaterar det som valuta
+    Then ska resultatet vara "0.00 kr"
 
-  Scenario: Format negative amount
-    Given the amount -5000 öre
-    When I format it as currency
-    Then the result should be "-50.00 kr"
+  Scenario: Formatera negativt belopp
+    Given beloppet -5000 öre
+    When jag formaterar det som valuta
+    Then ska resultatet vara "-50.00 kr"
 
-  Scenario: Format ISO date to Swedish format
-    Given the date "2024-01-15"
-    When I format it as a date
-    Then the result should be "2024-01-15"
+  Scenario: Formatera ISO-datum till svenskt format
+    Given datumet "2024-01-15"
+    When jag formaterar det som ett datum
+    Then ska resultatet vara "2024-01-15"
 
-  Scenario: Calculate profit correctly
-    Given a trade item with:
+  Scenario: Beräkna vinst korrekt
+    Given ett handelsobjekt med:
       | field                  | value |
       | buy_price              | 5000  |
       | buy_shipping_cost      | 500   |
@@ -37,10 +37,10 @@ Feature: Utility Functions
       | sell_packaging_cost    | 200   |
       | sell_postage_cost      | 100   |
       | sell_shipping_collected| 0     |
-    When I calculate the profit
-    Then the profit should be 2200
+    When jag beräknar vinsten
+    Then ska vinsten vara 2200
 
-  Scenario: Calculate profit with missing sell values
-    Given a trade item with buy_price 5000 and no sell price
-    When I calculate the profit
-    Then the profit should be -5000
+  Scenario: Beräkna vinst med saknade säljvärden
+    Given ett handelsobjekt med köppris 5000 och inget säljpris
+    When jag beräknar vinsten
+    Then ska vinsten vara -5000

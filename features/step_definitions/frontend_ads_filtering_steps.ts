@@ -10,10 +10,8 @@ interface ListingWithDetails {
 function filterListingsByTab(listings: ListingWithDetails[], tab: string): ListingWithDetails[] {
   if (tab === 'potential') {
     return listings.filter(l =>
-      l.potentialProfit !== undefined &&
-      l.potentialProfit > 0 &&
-      l.discountPercent !== undefined &&
-      l.discountPercent > 0
+      l.potentialProfit !== undefined && l.potentialProfit > 0 &&
+      l.discountPercent !== undefined && l.discountPercent > 0
     );
   }
   return listings;
@@ -27,7 +25,7 @@ Before(function () {
   frontendFiltered = [];
 });
 
-Given('frontend listings exist with various prices and valuations', function () {
+Given('frontend-annonser finns med varierande priser och värderingar', function () {
   frontendListings = [
     { id: 1, potentialProfit: 200, discountPercent: 20 },
     { id: 2, potentialProfit: -100, discountPercent: -10 },
@@ -35,11 +33,11 @@ Given('frontend listings exist with various prices and valuations', function () 
   ];
 });
 
-Given('no frontend listings exist', function () {
+Given('inga frontend-annonser finns', function () {
   frontendListings = [];
 });
 
-Given('frontend listings with profit data:', function (table: any) {
+Given('frontend-annonser med vinstdata:', function (table: any) {
   frontendListings = [];
   for (const row of table.rows()) {
     frontendListings.push({
@@ -50,27 +48,27 @@ Given('frontend listings with profit data:', function (table: any) {
   }
 });
 
-Given('a frontend listing with id {int} and no potential profit data', function (id: number) {
+Given('en frontend-annons med id {int} och ingen vinstdata', function (id: number) {
   frontendListings = [{ id }];
 });
 
-When('I apply the frontend filter {string}', function (tab: string) {
+When('jag applicerar frontend-filtret {string}', function (tab: string) {
   frontendFiltered = filterListingsByTab(frontendListings, tab);
 });
 
-Then('all frontend listings should be returned', function () {
+Then('ska alla frontend-annonser returneras', function () {
   assert.strictEqual(frontendFiltered.length, frontendListings.length);
 });
 
-Then('{int} frontend listings should be returned', function (expected: number) {
-  assert.strictEqual(frontendFiltered.length, expected, `Expected ${expected} listings, got ${frontendFiltered.length}`);
+Then('ska {int} frontend-annonser returneras', function (expected: number) {
+  assert.strictEqual(frontendFiltered.length, expected, `Förväntade ${expected} annonser, fick ${frontendFiltered.length}`);
 });
 
-Then('the returned frontend listing should have id {int}', function (expectedId: number) {
-  assert(frontendFiltered.length > 0, 'Expected at least one listing');
+Then('den returnerade frontend-annonsen ska ha id {int}', function (expectedId: number) {
+  assert(frontendFiltered.length > 0, 'Förväntade minst en annons');
   assert.strictEqual(frontendFiltered[0].id, expectedId);
 });
 
-Then('{int} frontend listing should be returned', function (expected: number) {
-  assert.strictEqual(frontendFiltered.length, expected, `Expected ${expected} listing, got ${frontendFiltered.length}`);
+Then('ska {int} frontend-annons returneras', function (expected: number) {
+  assert.strictEqual(frontendFiltered.length, expected, `Förväntade ${expected} annons, fick ${frontendFiltered.length}`);
 });

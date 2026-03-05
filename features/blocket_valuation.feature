@@ -1,18 +1,18 @@
-Feature: Blocket Valuation Method
-  As a valuation system
-  I want to estimate product prices from Blocket listings
-  So that I can provide accurate purchase recommendations
+Feature: Blocket-värdering
+  Som ett värderingssystem
+  Vill jag uppskatta produktpriser från Blocket-annonser
+  Så att jag kan ge korrekta köprekommendationer
 
-  Scenario: Parse API response and calculate valuation
-    Given Blocket valuation is enabled
-    And the Blocket API returns 12 listings with prices between 1000 and 2200 SEK
-    When I valuate a product on Blocket
-    Then the valuation should have a positive value
-    And the confidence should be at least 0.5 for 10 or more items
+  Scenario: Tolka API-svar och beräkna värdering
+    Given Blocket-värdering är aktiverad
+    And Blocket-API:et returnerar 12 annonser med priser mellan 1000 och 2200 SEK
+    When jag värderar en produkt på Blocket
+    Then värderingen ska ha ett positivt värde
+    And förtroendet ska vara minst 0.5 för 10 eller fler artiklar
 
-  Scenario: Filter outliers using IQR method
-    Given Blocket valuation is enabled
-    And the Blocket API returns listings with outliers:
+  Scenario: Filtrera extremvärden med IQR-metoden
+    Given Blocket-värdering är aktiverad
+    And Blocket-API:et returnerar annonser med extremvärden:
       | listing | price |
       | 1       | 1000  |
       | 2       | 1100  |
@@ -22,54 +22,54 @@ Feature: Blocket Valuation Method
       | 6       | 10000 |
       | 7       | 1250  |
       | 8       | 1150  |
-    When I valuate a product on Blocket
-    Then the valuation should be less than 2000
-    And outlier prices should be filtered out
+    When jag värderar en produkt på Blocket
+    Then värderingen ska vara mindre än 2000
+    And extrempriser ska ha filtrerats bort
 
-  Scenario: Return nil when Blocket is disabled
-    Given Blocket valuation is disabled
-    When I valuate a product on Blocket
-    Then the valuation should be nil
-    And no Blocket error should be returned
+  Scenario: Returnera null när Blocket är inaktiverat
+    Given Blocket-värdering är inaktiverad
+    When jag värderar en produkt på Blocket
+    Then Blocket-värderingen ska vara null
+    And inget Blocket-fel ska returneras
 
-  Scenario: Return error when no prices found
-    Given Blocket valuation is enabled
-    And the Blocket API returns no listings
-    When I valuate a product on Blocket
-    Then a Blocket error should be returned
-    And the valuation should be nil
+  Scenario: Returnera fel när inga priser hittas
+    Given Blocket-värdering är aktiverad
+    And Blocket-API:et returnerar inga annonser
+    When jag värderar en produkt på Blocket
+    Then ett Blocket-fel ska returneras
+    And Blocket-värderingen ska vara null
 
-  Scenario: Cache results to avoid duplicate API calls
-    Given Blocket valuation is enabled
-    And the Blocket API is available
-    When I valuate the same product twice
-    Then only one API request should be made
-    And both valuations should have the same value
+  Scenario: Cacha resultat för att undvika duplicerade API-anrop
+    Given Blocket-värdering är aktiverad
+    And Blocket-API:et är tillgängligt
+    When jag värderar samma produkt två gånger
+    Then ska bara ett API-anrop göras
+    And båda värderingarna ska ha samma värde
 
-  Scenario: Valuate with only model name (no manufacturer)
-    Given Blocket valuation is enabled
-    And the Blocket API returns listings for the model
-    When I valuate a product with only a model name
-    Then the valuation should have a positive value
+  Scenario: Värdera med enbart modellnamn (ingen tillverkare)
+    Given Blocket-värdering är aktiverad
+    And Blocket-API:et returnerar annonser för modellen
+    When jag värderar en produkt med enbart ett modellnamn
+    Then värderingen ska ha ett positivt värde
 
-  Scenario: Calculate quartiles for price statistics
-    Given prices: 100, 200, 300, 400, 500, 600, 700, 800
-    When I calculate quartiles
-    Then Q1 should be 200
-    And Q3 should be 600
-    And IQR should be 400
+  Scenario: Beräkna kvartiler för prisstatistik
+    Given priser: 100, 200, 300, 400, 500, 600, 700, 800
+    When jag beräknar kvartilerna
+    Then Q1 ska vara 200
+    And Q3 ska vara 600
+    And IQR ska vara 400
 
-  Scenario: Filter outliers from a price list
-    Given prices with outlier: 100, 200, 300, 400, 500, 10000
-    When I filter outliers using IQR
-    Then 5 prices should remain
+  Scenario: Filtrera extremvärden från en prislista
+    Given priser med extremvärde: 100, 200, 300, 400, 500, 10000
+    When jag filtrerar extremvärden med IQR
+    Then ska 5 priser återstå
 
-  Scenario: Calculate median of prices
-    Given an odd-length price list: 1, 2, 3, 4, 5
-    When I calculate the median
-    Then the median should be 3
+  Scenario: Beräkna median för priser
+    Given en prislista med ojämnt antal element: 1, 2, 3, 4, 5
+    When jag beräknar medianen
+    Then medianen ska vara 3
 
-  Scenario: Calculate median of even-length list
-    Given an even-length price list: 1, 2, 3, 4
-    When I calculate the median
-    Then the median should be 2
+  Scenario: Beräkna median för lista med jämnt antal element
+    Given en prislista med jämnt antal element: 1, 2, 3, 4
+    When jag beräknar medianen
+    Then medianen ska vara 2

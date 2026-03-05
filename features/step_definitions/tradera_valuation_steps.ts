@@ -18,12 +18,12 @@ function calculateConfidenceFromCount(count: number): number {
   if (count < 10) return 0.3;
   if (count < 50) return 0.5;
   if (count < 100) return 0.7;
-  return 0.84 + Math.min((count - 100) / 1000, 0.11); // up to 0.95
+  return 0.84 + Math.min((count - 100) / 1000, 0.11);
 }
 
 function valuateFromTraderaAPI(response: TraderaAPIResponse): { result: ValuationResult | null; error: Error | null } {
   if (response.averagePrice === 0 && response.count === 0) {
-    return { result: null, error: new Error('no prices found on Tradera') };
+    return { result: null, error: new Error('inga priser hittades på Tradera') };
   }
   const confidence = calculateConfidenceFromCount(response.count);
   return { result: { value: response.averagePrice, confidence }, error: null };
@@ -41,52 +41,48 @@ Before(function () {
   valuationError = null;
 });
 
-Given('Tradera valuation is enabled', function () {
+Given('Tradera-värdering är aktiverad', function () {
   traderaEnabled = true;
 });
 
-Given('Tradera valuation is disabled', function () {
+Given('Tradera-värdering är inaktiverad', function () {
   traderaEnabled = false;
 });
 
-Given('the Tradera API returns average price {int} SEK with {int} sold items', function (avgPrice: number, count: number) {
+Given('Tradera-API:et returnerar ett genomsnittspris på {int} SEK med {int} sålda artiklar', function (avgPrice: number, count: number) {
   mockAPIResponse = { averagePrice: avgPrice, lowestPrice: 160, highestPrice: 2900, count };
 });
 
-Given('the Tradera API returns zero average price and zero items', function () {
+Given('Tradera-API:et returnerar noll genomsnittspris och noll artiklar', function () {
   mockAPIResponse = { averagePrice: 0, lowestPrice: 0, highestPrice: 0, count: 0 };
 });
 
-When('I valuate a product on Tradera', function () {
-  if (!traderaEnabled) {
-    valuationResult = null;
-    valuationError = null;
-    return;
-  }
+When('jag värderar en produkt på Tradera', function () {
+  if (!traderaEnabled) { valuationResult = null; valuationError = null; return; }
   const result = valuateFromTraderaAPI(mockAPIResponse);
   valuationResult = result.result;
   valuationError = result.error;
 });
 
-Then('the valuation value should be {int}', function (expected: number) {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
+Then('värderingsvärdet ska vara {int}', function (expected: number) {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
   assert.strictEqual(valuationResult!.value, expected);
 });
 
-Then('the confidence should be at least {float} for {int} items', function (minConf: number, _count: number) {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
+Then('förtroendet ska vara minst {float} för {int} artiklar', function (minConf: number, _count: number) {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
   assert(valuationResult!.confidence >= minConf,
-    `Expected confidence >= ${minConf}, got ${valuationResult!.confidence}`);
+    `Förväntade förtroende >= ${minConf}, fick ${valuationResult!.confidence}`);
 });
 
-Then('the Tradera valuation should be nil', function () {
-  assert(valuationResult === null, `Expected nil valuation, got ${JSON.stringify(valuationResult)}`);
+Then('Tradera-värderingen ska vara null', function () {
+  assert(valuationResult === null, `Förväntade null värdering, fick ${JSON.stringify(valuationResult)}`);
 });
 
-Then('no Tradera error should be returned', function () {
-  assert(valuationError === null, `Expected no error, got: ${valuationError?.message}`);
+Then('inget Tradera-fel ska returneras', function () {
+  assert(valuationError === null, `Förväntade inget fel, fick: ${valuationError?.message}`);
 });
 
-Then('a Tradera error should be returned', function () {
-  assert(valuationError !== null, 'Expected an error but got none');
+Then('ett Tradera-fel ska returneras', function () {
+  assert(valuationError !== null, 'Förväntade ett fel men fick inget');
 });

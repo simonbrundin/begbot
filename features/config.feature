@@ -1,38 +1,38 @@
-Feature: Configuration
+Feature: Konfiguration
 
   Background:
-    Given a configuration system is available
+    Given ett konfigurationssystem är tillgängligt
 
-  Scenario: Load configuration with LLM models defined
-    Given a config file with provider "openrouter"
-    And API key "test-key"
-    And site URL "http://localhost:3000"
-    And site name "Begbot"
-    And default model "deepseek/deepseek-v3.2"
-    And models:
+  Scenario: Ladda konfiguration med LLM-modeller definierade
+    Given en konfigurationsfil med leverantören "openrouter"
+    And API-nyckel "test-key"
+    And webbplatsens URL "http://localhost:3000"
+    And webbplatsens namn "Begbot"
+    And standardmodell "deepseek/deepseek-v3.2"
+    And modeller:
       | task                    | model                              |
       | ExtractProductInfo      | anthropic/claude-sonnet-4-20250514 |
       | ValidateProduct         | google/gemini-2.5-pro              |
       | CheckProductCondition   | openai/gpt-4o-mini                 |
       | EstimateNewPrice        | deepseek/deepseek-chat             |
-    When loading the configuration
-    Then the provider should be "openrouter"
-    And the API key should be "test-key"
-    And the site URL should be "http://localhost:3000"
-    And the site name should be "Begbot"
-    And the default model should be "deepseek/deepseek-v3.2"
-    And there should be 4 models defined
+    When konfigurationen laddas
+    Then leverantören ska vara "openrouter"
+    And API-nyckeln ska vara "test-key"
+    And webbplatsens URL ska vara "http://localhost:3000"
+    And webbplatsens namn ska vara "Begbot"
+    And standardmodellen ska vara "deepseek/deepseek-v3.2"
+    And det ska finnas 4 modeller definierade
 
-  Scenario: Load configuration without LLM models
-    Given a config file with provider "openrouter"
-    And API key "test-key"
-    And default model "openai/gpt-4o"
-    And no models defined
-    When loading the configuration
-    Then the models count should be 0
+  Scenario: Ladda konfiguration utan LLM-modeller
+    Given en konfigurationsfil med leverantören "openrouter"
+    And API-nyckel "test-key"
+    And standardmodell "openai/gpt-4o"
+    And inga modeller definierade
+    When konfigurationen laddas
+    Then antalet modeller ska vara 0
 
-  Scenario: Load configuration with database settings
-    Given a config file with:
+  Scenario: Ladda konfiguration med databasinställningar
+    Given en konfigurationsfil med:
       | setting   | value      |
       | host      | localhost  |
       | port      | 5432       |
@@ -40,32 +40,32 @@ Feature: Configuration
       | password  | test       |
       | name      | testdb     |
       | sslmode   | require    |
-    When loading the configuration
-    Then the database host should be "localhost"
-    And the database port should be 5432
+    When konfigurationen laddas
+    Then databashosten ska vara "localhost"
+    And databasporten ska vara 5432
 
-  Scenario: Load configuration with scraping settings
-    Given a config file with scraping:
+  Scenario: Ladda konfiguration med skrapningsinställningar
+    Given en konfigurationsfil med skrapning:
       | marketplace | enabled | timeout |
       | tradera     | false   | 10s     |
       | blocket     | false   | 10s     |
-    When loading the configuration
-    Then tradera should be disabled
-    And blocket should be disabled
+    When konfigurationen laddas
+    Then Tradera ska vara inaktiverat
+    And Blocket ska vara inaktiverat
 
-  Scenario: Load configuration with valuation settings
-    Given a config file with valuation:
+  Scenario: Ladda konfiguration med värderingsinställningar
+    Given en konfigurationsfil med värdering:
       | setting            | value |
       | target_sell_days   | 14    |
       | min_profit_margin  | 0.15  |
       | safety_margin      | 0.2   |
-    When loading the configuration
-    Then the target sell days should be 14
-    And the minimum profit margin should be 0.15
-    And the safety margin should be 0.2
+    When konfigurationen laddas
+    Then målet för säljdagar ska vara 14
+    And minsta vinstmarginal ska vara 0.15
+    And säkerhetsmarginalen ska vara 0.2
 
-  Scenario: Load configuration with email settings
-    Given a config file with email:
+  Scenario: Ladda konfiguration med e-postinställningar
+    Given en konfigurationsfil med e-post:
       | setting      | value          |
       | smtp_host    | localhost      |
       | smtp_port    | 587            |
@@ -73,17 +73,17 @@ Feature: Configuration
       | smtp_password| test           |
       | from         | test@example.com |
       | recipients   | test@example.com |
-    When loading the configuration
-    Then the SMTP host should be "localhost"
-    And the SMTP port should be "587"
-    And the from address should be "test@example.com"
+    When konfigurationen laddas
+    Then SMTP-hosten ska vara "localhost"
+    And SMTP-porten ska vara "587"
+    And avsändaradressen ska vara "test@example.com"
 
-  Scenario: Handle missing config file
-    Given a non-existent config file
-    When loading the configuration
-    Then a config loading error should be returned
+  Scenario: Hantera saknad konfigurationsfil
+    Given en icke-existerande konfigurationsfil
+    When konfigurationen laddas
+    Then ett konfigurationsladdningsfel ska returneras
 
-  Scenario: Handle invalid config format
-    Given a config file with invalid YAML
-    When loading the configuration
-    Then a config loading error should be returned
+  Scenario: Hantera ogiltigt konfigurationsformat
+    Given en konfigurationsfil med ogiltigt YAML
+    When konfigurationen laddas
+    Then ett konfigurationsladdningsfel ska returneras

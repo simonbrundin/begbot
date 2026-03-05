@@ -1,110 +1,110 @@
-Feature: Weighted Valuation Calculation
-  As a product valuation system
-  I want to compute a weighted average of valuations from multiple sources
-  So that I can recommend the best purchase price
+Feature: Viktad värderingsberäkning
+  Som ett produktvärderingssystem
+  Vill jag beräkna ett viktat genomsnitt av värderingar från flera källor
+  Så att jag kan rekommendera det bästa köppriset
 
-  Scenario: Type is active when no configs exist (backward compatible)
-    Given no valuation configs exist for product 1
-    When I check if type 1 is active for product 1
-    Then it should be active
+  Scenario: Typ är aktiv när inga konfigurationer finns (bakåtkompatibel)
+    Given inga värderingskonfigurationer finns för produkt 1
+    When jag kontrollerar om typ 1 är aktiv för produkt 1
+    Then ska den vara aktiv
 
-  Scenario: Type is active when configs are empty for product
-    Given an empty config list for product 1
-    When I check if type 1 is active for product 1
-    Then it should be active
+  Scenario: Typ är aktiv när konfigurationslistan är tom för produkten
+    Given en tom konfigurationslista för produkt 1
+    When jag kontrollerar om typ 1 är aktiv för produkt 1
+    Then ska den vara aktiv
 
-  Scenario: Type is active when no config for specific type
-    Given a config that only deactivates type 2 for product 1
-    When I check if type 1 is active for product 1
-    Then it should be active
+  Scenario: Typ är aktiv när ingen konfiguration finns för den specifika typen
+    Given en konfiguration som bara inaktiverar typ 2 för produkt 1
+    When jag kontrollerar om typ 1 är aktiv för produkt 1
+    Then ska den vara aktiv
 
-  Scenario: Type is inactive when deactivated in config
-    Given a config that deactivates type 1 for product 1
-    When I check if type 1 is active for product 1
-    Then it should be inactive
+  Scenario: Typ är inaktiv när den är inaktiverad i konfigurationen
+    Given en konfiguration som inaktiverar typ 1 för produkt 1
+    When jag kontrollerar om typ 1 är aktiv för produkt 1
+    Then ska den vara inaktiv
 
-  Scenario: Type is active when explicitly activated in config
-    Given a config that activates type 1 for product 1
-    When I check if type 1 is active for product 1
-    Then it should be active
+  Scenario: Typ är aktiv när den är explicit aktiverad i konfigurationen
+    Given en konfiguration som aktiverar typ 1 för produkt 1
+    When jag kontrollerar om typ 1 är aktiv för produkt 1
+    Then ska den vara aktiv
 
-  Scenario: Return null when no enabled valuation types
-    Given no enabled valuation types
-    When I compute weighted valuation for product 1
-    Then the result should be null
+  Scenario: Returnera null när inga aktiverade värderingstyper finns
+    Given inga aktiverade värderingstyper
+    When jag beräknar viktad värdering för produkt 1
+    Then ska resultatet vara null
 
-  Scenario: Return null when product has no valuations
-    Given enabled types: 1, 2
-    And product 1 has no valuations
-    When I compute weighted valuation for product 1
-    Then the result should be null
+  Scenario: Returnera null när produkten saknar värderingar
+    Given aktiverade typer: 1, 2
+    And produkt 1 saknar värderingar
+    When jag beräknar viktad värdering för produkt 1
+    Then ska resultatet vara null
 
-  Scenario: Calculate correct average with equal weights
-    Given enabled types: 1, 2
-    And product 1 has valuation 1000 for type 1 and 2000 for type 2
-    And both types have weight 1
-    When I compute weighted valuation for product 1
-    Then the average should be 1500
+  Scenario: Beräkna korrekt genomsnitt med lika vikter
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 1000 för typ 1 och 2000 för typ 2
+    And båda typerna har vikten 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 1500
 
-  Scenario: Calculate correct average with custom weights
-    Given enabled types: 1, 2
-    And product 1 has valuation 1000 for type 1 and 3000 for type 2
-    And type 1 has weight 1 and type 2 has weight 3
-    When I compute weighted valuation for product 1
-    Then the average should be 2500
+  Scenario: Beräkna korrekt genomsnitt med anpassade vikter
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 1000 för typ 1 och 3000 för typ 2
+    And typ 1 har vikten 1 och typ 2 har vikten 3
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 2500
 
-  Scenario: Safety is 100% when only one valuation exists
-    Given enabled types: 1, 2
-    And product 1 has only valuation 1000 for type 1
-    When I compute weighted valuation for product 1
-    Then the safety percent should be 100
+  Scenario: Säkerhetsnivån är 100% när bara en värdering finns
+    Given aktiverade typer: 1, 2
+    And produkt 1 har bara värderingen 1000 för typ 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska säkerhetsprocenten vara 100
 
-  Scenario: Safety is lower when values diverge significantly
-    Given enabled types: 1, 2
-    And product 1 has valuation 100 for type 1 and 900 for type 2
-    And both types have weight 1
-    When I compute weighted valuation for product 1
-    Then the safety percent should be less than 100
+  Scenario: Säkerhetsnivån är lägre när värdena skiljer sig avsevärt
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 100 för typ 1 och 900 för typ 2
+    And båda typerna har vikten 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska säkerhetsprocenten vara lägre än 100
 
-  Scenario: Return null when total weight is zero
-    Given enabled types: 1
-    And product 1 has valuation 1000 for type 1 with weight 0
-    When I compute weighted valuation for product 1
-    Then the result should be null
+  Scenario: Returnera null när den totala vikten är noll
+    Given aktiverade typer: 1
+    And produkt 1 har värderingen 1000 för typ 1 med vikten 0
+    When jag beräknar viktad värdering för produkt 1
+    Then ska resultatet vara null
 
-  Scenario: Ignore types without a valuation for the product
-    Given enabled types: 1, 2
-    And product 1 has only valuation 2000 for type 1
-    And type 1 has weight 1 and type 2 has weight 1
-    When I compute weighted valuation for product 1
-    Then the average should be 2000
-    And the safety percent should be 100
+  Scenario: Ignorera typer utan värdering för produkten
+    Given aktiverade typer: 1, 2
+    And produkt 1 har bara värderingen 2000 för typ 1
+    And typ 1 har vikten 1 och typ 2 har vikten 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 2000
+    And ska säkerhetsprocenten vara 100
 
-  Scenario: Exclude deactivated types from weighted average
-    Given enabled types: 1, 2
-    And product 1 has valuation 1000 for type 1 and 3000 for type 2
-    And type 2 is deactivated for product 1
-    And both types have weight 1
-    When I compute weighted valuation for product 1
-    Then the average should be 1000
+  Scenario: Exkludera inaktiverade typer från viktat genomsnitt
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 1000 för typ 1 och 3000 för typ 2
+    And typ 2 är inaktiverad för produkt 1
+    And båda typerna har vikten 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 1000
 
-  Scenario: Return null when all types are deactivated for product
-    Given enabled types: 1, 2
-    And product 1 has valuation 1000 for type 1 and 2000 for type 2
-    And both type 1 and type 2 are deactivated for product 1
-    When I compute weighted valuation for product 1
-    Then the result should be null
+  Scenario: Returnera null när alla typer är inaktiverade för produkten
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 1000 för typ 1 och 2000 för typ 2
+    And både typ 1 och typ 2 är inaktiverade för produkt 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska resultatet vara null
 
-  Scenario: Use all types when no config exists (backward compatible)
-    Given enabled types: 1, 2
-    And product 1 has valuation 1000 for type 1 and 2000 for type 2
-    And no configs exist
-    When I compute weighted valuation for product 1
-    Then the average should be 1500
+  Scenario: Använd alla typer när ingen konfiguration finns (bakåtkompatibel)
+    Given aktiverade typer: 1, 2
+    And produkt 1 har värderingen 1000 för typ 1 och 2000 för typ 2
+    And inga konfigurationer finns
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 1500
 
-  Scenario: Last active type gets full weight when others deactivated
-    Given enabled types: 1, 2, 3
-    And product 1 has valuation 1000 for type 1, 2000 for type 2, 3000 for type 3
-    And types 1 and 2 are deactivated for product 1
-    When I compute weighted valuation for product 1
-    Then the average should be 3000
+  Scenario: Sista aktiva typen får full vikt när andra är inaktiverade
+    Given aktiverade typer: 1, 2, 3
+    And produkt 1 har värderingen 1000 för typ 1, 2000 för typ 2, 3000 för typ 3
+    And typ 1 och typ 2 är inaktiverade för produkt 1
+    When jag beräknar viktad värdering för produkt 1
+    Then ska genomsnittet vara 3000

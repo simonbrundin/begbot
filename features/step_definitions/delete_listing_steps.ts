@@ -19,72 +19,41 @@ Before(function () {
   responseCode = 0;
 });
 
-Given('I have a listing database', function () {
+Given('jag har en annonstabas', function () {
   mockDB = { listings: new Map() };
 });
 
-Given('a listing with id {string} exists in the database', function (idStr: string) {
+Given('en annons med id {string} finns i databasen', function (idStr: string) {
   const id = parseInt(idStr);
-  mockDB.listings.set(id, {
-    id,
-    title: `Test Listing ${id}`,
-    status: 'active',
-  });
+  mockDB.listings.set(id, { id, title: `Testannons ${id}`, status: 'active' });
 });
 
-Given('no listing with id {string} exists in the database', function (_idStr: string) {
-  // Do nothing - listing should not exist
-});
+Given('ingen annons med id {string} finns i databasen', function (_idStr: string) {});
 
-Given('the listing has valuations', function () {
-  // Simulated - valuations are associated with the latest listing
-});
+Given('annonsen har värderingar', function () {});
+Given('annonsen har handlade varor', function () {});
+Given('annonsen har bildlänkar', function () {});
 
-Given('the listing has traded items', function () {
-  // Simulated
-});
-
-Given('the listing has image links', function () {
-  // Simulated
-});
-
-When('I send a DELETE request to {string}', function (apiPath: string) {
+When('jag skickar en DELETE-förfrågan till {string}', function (apiPath: string) {
   const match = apiPath.match(/\/api\/listings\/(.+)$/);
-  if (!match) {
-    responseCode = 400;
-    return;
-  }
+  if (!match) { responseCode = 400; return; }
   const idStr = match[1];
   const id = parseInt(idStr);
-  if (isNaN(id)) {
-    responseCode = 400;
-    return;
-  }
-  if (!mockDB.listings.has(id)) {
-    responseCode = 404;
-    return;
-  }
+  if (isNaN(id)) { responseCode = 400; return; }
+  if (!mockDB.listings.has(id)) { responseCode = 404; return; }
   mockDB.listings.delete(id);
   responseCode = 204;
 });
 
-Then('the response status should be {int}', function (statusCode: number) {
-  assert.strictEqual(responseCode, statusCode, `Expected status ${statusCode}, got ${responseCode}`);
+Then('ska svarsstatusen vara {int}', function (statusCode: number) {
+  assert.strictEqual(responseCode, statusCode, `Förväntade status ${statusCode}, fick ${responseCode}`);
 });
 
-Then('the listing with id {string} should no longer exist in the database', function (idStr: string) {
+Then('annonsen med id {string} ska inte längre finnas i databasen', function (idStr: string) {
   const id = parseInt(idStr);
-  assert(!mockDB.listings.has(id), `Listing ${id} should not exist after deletion`);
+  assert(!mockDB.listings.has(id), `Annons ${id} ska inte finnas efter borttagning`);
 });
 
-Then('the related valuations should also be deleted', function () {
-  // Verified via cascade - documented in feature
-});
-
-Then('the related traded items should also be deleted', function () {
-  // Verified via cascade - documented in feature
-});
-
-Then('the related image links should also be deleted', function () {
-  // Verified via cascade - documented in feature
-});
+Then('tillhörande värderingar ska också tas bort', function () {});
+Then('tillhörande handlade varor ska också tas bort', function () {});
+Then('tillhörande bildlänkar ska också tas bort', function () {});

@@ -1,155 +1,155 @@
-Feature: Valuation
+Feature: Värdering
 
   Background:
-    Given a valuation compiler is available
+    Given en värderingskompilator är tillgänglig
 
-  Scenario: Calculate weighted average with multiple inputs
-    Given the following valuation inputs:
+  Scenario: Beräkna viktat genomsnitt med flera indata
+    Given följande värderingsindata:
       | type     | value | confidence |
       | Method1  | 1000  | 0.8        |
       | Method2  | 1200  | 0.6        |
       | Method3  | 1100  | 0.7        |
-    When the compiler calculates the weighted average
-    Then the recommended price should be between 1000 and 1200
-    And the confidence should be between 0.6 and 0.8
+    When kompilatorn beräknar det viktade genomsnittet
+    Then ska det rekommenderade priset vara mellan 1000 och 1200
+    And förtroendet ska vara mellan 0.6 och 0.8
 
-  Scenario: Calculate weighted average with single input
-    Given a single valuation input with value 1500 and confidence 0.9
-    When the compiler calculates the weighted average
-    Then the recommended price should be 1500
-    And the confidence should be 0.9
+  Scenario: Beräkna viktat genomsnitt med ett enda indata
+    Given ett enda värderingsindata med värdet 1500 och förtroendet 0.9
+    When kompilatorn beräknar det viktade genomsnittet
+    Then ska det rekommenderade priset vara 1500
+    And förtroendet ska vara 0.9
 
-  Scenario: Handle empty inputs
-    Given no valuation inputs
-    When the compiler calculates the weighted average
-    Then the recommended price should be 0
-    And the confidence should be 0
+  Scenario: Hantera tomma indata
+    Given inga värderingsindata
+    When kompilatorn beräknar det viktade genomsnittet
+    Then ska det rekommenderade priset vara 0
+    And förtroendet ska vara 0
 
-  Scenario: Calculate historical price for days
-    Given a historical valuation with K-value -10 and intercept 1500
-    When calculating the price for 0 days
-    Then the price should be 1500
-    When calculating the price for 7 days
-    Then the price should be 1430
-    When calculating the price for 30 days
-    Then the price should be 1200
+  Scenario: Beräkna historiskt pris för dagar
+    Given en historisk värdering med K-värde -10 och interceptet 1500
+    When priset för 0 dagar beräknas
+    Then ska priset vara 1500
+    When priset för 7 dagar beräknas
+    Then ska priset vara 1430
+    When priset för 30 dagar beräknas
+    Then ska priset vara 1200
 
-  Scenario: Handle historical valuation with no data
-    Given a historical valuation with no data
-    When calculating the price for 7 days
-    Then the price should be 0
+  Scenario: Hantera historisk värdering utan data
+    Given en historisk värdering utan data
+    When priset för 7 dagar beräknas
+    Then ska priset vara 0
 
-  Scenario: Calculate profit
-    Given a purchase price of 500 SEK
-    And shipping cost of 50 SEK
-    And estimated sell price of 1000 SEK
-    When calculating the profit
-    Then the profit should be 450 SEK
+  Scenario: Beräkna vinst
+    Given ett inköpspris på 500 SEK
+    And fraktkostnad på 50 SEK
+    And uppskattat säljpris på 1000 SEK
+    When vinsten beräknas
+    Then ska beräknad vinst vara 450 SEK
 
-  Scenario: Calculate profit margin
-    Given a profit of 450 SEK
-    And total cost of 550 SEK
-    When calculating the profit margin
-    Then the margin should be approximately 0.818
+  Scenario: Beräkna vinstmarginal
+    Given en vinst på 450 SEK
+    And en totalkostnad på 550 SEK
+    When vinstmarginalen beräknas
+    Then ska marginalen vara ungefär 0.818
 
-  Scenario: Handle zero cost for profit margin
-    Given a profit of 100 SEK
-    And total cost of 0 SEK
-    When calculating the profit margin
-    Then the margin should be 0
+  Scenario: Hantera nollkostnad för vinstmarginal
+    Given en vinst på 100 SEK
+    And en totalkostnad på 0 SEK
+    When vinstmarginalen beräknas
+    Then ska marginalen vara 0
 
-  Scenario: Estimate sell probability with negative K value
-    Given K value is -10 (price drops over time)
-    When estimating sell probability for 7 days with target 30 days
-    Then the probability should be 0.95
-    When estimating sell probability for 30 days with target 30 days
-    Then the probability should be 0.5
+  Scenario: Uppskatta säljsannolikhet med negativt K-värde
+    Given K-värdet är -10 (priset sjunker med tid)
+    When säljsannolikheten uppskattas för 7 dagar med mål 30 dagar
+    Then ska sannolikheten vara 0.95
+    When säljsannolikheten uppskattas för 30 dagar med mål 30 dagar
+    Then ska sannolikheten vara 0.5
 
-  Scenario: Estimate sell probability with positive K value
-    Given K value is 10 (price increases over time)
-    When estimating sell probability for 7 days with target 30 days
-    Then the probability should be 0.1
-    When estimating sell probability for 30 days with target 30 days
-    Then the probability should be 0.5
+  Scenario: Uppskatta säljsannolikhet med positivt K-värde
+    Given K-värdet är 10 (priset stiger med tid)
+    When säljsannolikheten uppskattas för 7 dagar med mål 30 dagar
+    Then ska sannolikheten vara 0.1
+    When säljsannolikheten uppskattas för 30 dagar med mål 30 dagar
+    Then ska sannolikheten vara 0.5
 
-  Scenario Outline: Database valuation method priority
-    Given a database valuation method
-    When getting the method name
-    Then the name should be "Egen databas"
-    And the priority should be <priority>
+  Scenario Outline: Prioritet för databasvärderingsmetod
+    Given en databasvärderingsmetod
+    When metodnamnet hämtas
+    Then ska namnet vara "Egen databas"
+    And prioriteten ska vara <priority>
 
     Examples:
       | priority |
       | 1        |
 
-  Scenario Outline: LLM new price method
-    Given an LLM new price method
-    When getting the method name
-    Then the name should be "Nypris (LLM)"
-    And the priority should be <priority>
+  Scenario Outline: LLM nyprismetod
+    Given en LLM-nyprismetod
+    When metodnamnet hämtas
+    Then ska namnet vara "Nypris (LLM)"
+    And prioriteten ska vara <priority>
 
     Examples:
       | priority |
       | 2        |
 
-  Scenario Outline: Tradera valuation method
-    Given a Tradera valuation method
-    When getting the method name
-    Then the name should be "Tradera"
-    And the priority should be <priority>
+  Scenario Outline: Tradera-värderingsmetod
+    Given en Tradera-värderingsmetod
+    When metodnamnet hämtas
+    Then ska namnet vara "Tradera"
+    And prioriteten ska vara <priority>
 
     Examples:
       | priority |
       | 3        |
 
-  Scenario Outline: Sold ads valuation method
-    Given a sold ads valuation method
-    When getting the method name
-    Then the name should be "eBay/Marknadsplatser"
-    And the priority should be <priority>
+  Scenario Outline: Metod för sålda annonser
+    Given en metod för sålda annonser
+    When metodnamnet hämtas
+    Then ska namnet vara "eBay/Marknadsplatser"
+    And prioriteten ska vara <priority>
 
     Examples:
       | priority |
       | 4        |
 
-  Scenario: Calculate confidence with no items
-    Given a database valuation method with 0 sold items
-    When calculating confidence
-    Then the confidence should be 0
+  Scenario: Beräkna förtroende med inga artiklar
+    Given en databasvärderingsmetod med 0 sålda artiklar
+    When förtroendet beräknas
+    Then ska förtroendet vara 0
 
-  Scenario: Calculate confidence with 2 items
-    Given a database valuation method with 2 sold items
-    When calculating confidence
-    Then the confidence should be 0.3
+  Scenario: Beräkna förtroende med 2 artiklar
+    Given en databasvärderingsmetod med 2 sålda artiklar
+    When förtroendet beräknas
+    Then ska förtroendet vara 0.3
 
-  Scenario: Calculate confidence with 4 items
-    Given a database valuation method with 4 sold items
-    When calculating confidence
-    Then the confidence should be 0.5
+  Scenario: Beräkna förtroende med 4 artiklar
+    Given en databasvärderingsmetod med 4 sålda artiklar
+    When förtroendet beräknas
+    Then ska förtroendet vara 0.5
 
-  Scenario: Calculate confidence with 8 items
-    Given a database valuation method with 8 sold items
-    When calculating confidence
-    Then the confidence should be 0.7
+  Scenario: Beräkna förtroende med 8 artiklar
+    Given en databasvärderingsmetod med 8 sålda artiklar
+    When förtroendet beräknas
+    Then ska förtroendet vara 0.7
 
-  Scenario: Price should be in SEK not ören
-    Given sold items with prices 100 SEK, 150 SEK, and 125 SEK
-    When calculating the estimated price
-    Then the price should be in SEK (not ören)
+  Scenario: Priset ska vara i SEK och inte i öre
+    Given sålda artiklar med priserna 100 SEK, 150 SEK och 125 SEK
+    When det uppskattade priset beräknas
+    Then ska priset vara i SEK och inte i öre
 
-  Scenario: Compile with no valid inputs
-    Given valuation inputs with zero value or confidence
-    When compiling the valuation
-    Then the recommended price should be 0
+  Scenario: Kompilera utan giltiga indata
+    Given värderingsindata med nollvärde eller nollförtroende
+    When värderingen kompileras
+    Then ska det rekommenderade priset vara 0
 
-  Scenario: Validate valuation bounds - normal case
-    Given valuation inputs with value 1500 and confidence 0.7
-    And new price of 2000
-    When compiling the weighted average
-    Then no valuation error should occur
+  Scenario: Validera värderingsgränser - normalt fall
+    Given värderingsindata med värdet 1500 och förtroendet 0.7
+    And nypriset är 2000
+    When det viktade genomsnittet kompileras
+    Then ska inget värderingsfel inträffa
 
-  Scenario: Validate valuation bounds - unreasonable case
-    Given a valuation input with value 150000 and confidence 0.7
-    And new price of 2000
-    When compiling the weighted average
-    Then a warning should be logged for unreasonable valuation
+  Scenario: Validera värderingsgränser - orimligt fall
+    Given ett värderingsindata med värdet 150000 och förtroendet 0.7
+    And nypriset är 2000
+    When det viktade genomsnittet kompileras
+    Then ska en varning loggas för orimlig värdering

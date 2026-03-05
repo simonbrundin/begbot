@@ -1,24 +1,24 @@
-Feature: Tradera Valuation Method
-  As a valuation system
-  I want to estimate product prices from Tradera sold listings
-  So that I can provide accurate purchase recommendations
+Feature: Tradera-värdering
+  Som ett värderingssystem
+  Vill jag uppskatta produktpriser från sålda Tradera-annonser
+  Så att jag kan ge korrekta köprekommendationer
 
-  Scenario: Parse Tradera API response and calculate valuation
-    Given Tradera valuation is enabled
-    And the Tradera API returns average price 2045 SEK with 901 sold items
-    When I valuate a product on Tradera
-    Then the valuation value should be 2045
-    And the confidence should be at least 0.84 for 901 items
+  Scenario: Tolka Tradera API-svar och beräkna värdering
+    Given Tradera-värdering är aktiverad
+    And Tradera-API:et returnerar ett genomsnittspris på 2045 SEK med 901 sålda artiklar
+    When jag värderar en produkt på Tradera
+    Then värderingsvärdet ska vara 2045
+    And förtroendet ska vara minst 0.84 för 901 artiklar
 
-  Scenario: Return error when no prices found
-    Given Tradera valuation is enabled
-    And the Tradera API returns zero average price and zero items
-    When I valuate a product on Tradera
-    Then a Tradera error should be returned
-    And the Tradera valuation should be nil
+  Scenario: Returnera fel när inga priser hittas
+    Given Tradera-värdering är aktiverad
+    And Tradera-API:et returnerar noll genomsnittspris och noll artiklar
+    When jag värderar en produkt på Tradera
+    Then ett Tradera-fel ska returneras
+    And Tradera-värderingen ska vara null
 
-  Scenario: Return nil when Tradera is disabled
-    Given Tradera valuation is disabled
-    When I valuate a product on Tradera
-    Then the Tradera valuation should be nil
-    And no Tradera error should be returned
+  Scenario: Returnera null när Tradera är inaktiverat
+    Given Tradera-värdering är inaktiverad
+    When jag värderar en produkt på Tradera
+    Then Tradera-värderingen ska vara null
+    And inget Tradera-fel ska returneras

@@ -48,20 +48,18 @@ interface Config {
 }
 
 function parseYaml(content: string): any {
-  // Simple YAML parser for our config format
   const result: any = {};
   const lines = content.split('\n');
   let currentSection: string | null = null;
   let currentSubSection: string | null = null;
   let currentSubSubSection: string | null = null;
-  
+
   for (const line of lines) {
     if (!line.trim() || line.trim().startsWith('#')) continue;
-    
     const indentMatch = line.match(/^(\s*)/);
     const indent = indentMatch ? indentMatch[1].length : 0;
     const trimmed = line.trim();
-    
+
     if (indent === 0 && trimmed.endsWith(':')) {
       currentSection = trimmed.slice(0, -1);
       currentSubSection = null;
@@ -81,7 +79,7 @@ function parseYaml(content: string): any {
       if (value === 'true') value = true;
       else if (value === 'false') value = false;
       else if (!isNaN(Number(value)) && value !== '') value = Number(value);
-      
+
       if (indent === 2 && currentSection) {
         result[currentSection][key] = value;
       } else if (indent === 4 && currentSection && currentSubSection) {
@@ -100,7 +98,7 @@ function parseYaml(content: string): any {
 function loadConfig(filePath: string): { config: Config | null; error: Error | null } {
   try {
     if (!fs.existsSync(filePath)) {
-      return { config: null, error: new Error(`config file not found: ${filePath}`) };
+      return { config: null, error: new Error(`konfigurationsfil hittades inte: ${filePath}`) };
     }
     const content = fs.readFileSync(filePath, 'utf-8');
     try {
@@ -150,46 +148,36 @@ let tmpDir: string = '';
 let configPath: string = '';
 let loadedConfig: Config | null = null;
 let loadError: Error | null = null;
-let configContent: string = '';
 
 Before(function () {
   tmpDir = '';
   configPath = '';
   loadedConfig = null;
   loadError = null;
-  configContent = '';
 });
 
 After(function () {
-  if (tmpDir && fs.existsSync(tmpDir)) {
+  if (tmpDir && fs.existsSync(tmpDir) && fs.statSync(tmpDir).isDirectory()) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
-Given('a configuration system is available', function () {
-  // Nothing to set up
-});
+Given('ett konfigurationssystem är tillgängligt', function () {});
 
-Given('a config file with provider {string}', function (provider: string) {
+Given('en konfigurationsfil med leverantören {string}', function (provider: string) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
   configPath = path.join(tmpDir, 'config.yaml');
-  configContent = `llm:\n  provider: "${provider}"\n`;
-  fs.writeFileSync(configPath, configContent);
+  fs.writeFileSync(configPath, `llm:\n  provider: "${provider}"\n`);
 });
 
-Given('API key {string}', function (_apiKey: string) {
-  // Config building is simplified - we just track it
-});
+Given('API-nyckel {string}', function (_apiKey: string) {});
+Given('webbplatsens URL {string}', function (_siteURL: string) {});
+Given('webbplatsens namn {string}', function (_siteName: string) {});
+Given('standardmodell {string}', function (_model: string) {});
+Given('modeller:', function (_table: any) {});
+Given('inga modeller definierade', function () {});
 
-Given('site URL {string}', function (_siteURL: string) {});
-Given('site name {string}', function (_siteName: string) {});
-Given('default model {string}', function (_model: string) {});
-
-Given('models:', function (_table: any) {});
-
-Given('no models defined', function () {});
-
-Given('a config file with:', function (table: any) {
+Given('en konfigurationsfil med:', function (table: any) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
   configPath = path.join(tmpDir, 'config.yaml');
   let content = 'database:\n';
@@ -199,124 +187,119 @@ Given('a config file with:', function (table: any) {
   fs.writeFileSync(configPath, content);
 });
 
-Given('a config file with scraping:', function (_table: any) {
+Given('en konfigurationsfil med skrapning:', function (_table: any) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
   configPath = path.join(tmpDir, 'config.yaml');
-  const content = `scraping:\n  tradera:\n    enabled: false\n  blocket:\n    enabled: false\n`;
-  fs.writeFileSync(configPath, content);
+  fs.writeFileSync(configPath, `scraping:\n  tradera:\n    enabled: false\n  blocket:\n    enabled: false\n`);
 });
 
-Given('a config file with valuation:', function (_table: any) {
+Given('en konfigurationsfil med värdering:', function (_table: any) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
   configPath = path.join(tmpDir, 'config.yaml');
-  const content = `valuation:\n  target_sell_days: 14\n  min_profit_margin: 0.15\n  safety_margin: 0.2\n`;
-  fs.writeFileSync(configPath, content);
+  fs.writeFileSync(configPath, `valuation:\n  target_sell_days: 14\n  min_profit_margin: 0.15\n  safety_margin: 0.2\n`);
 });
 
-Given('a config file with email:', function (_table: any) {
+Given('en konfigurationsfil med e-post:', function (_table: any) {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
   configPath = path.join(tmpDir, 'config.yaml');
-  const content = `email:\n  smtp_host: "localhost"\n  smtp_port: "587"\n  from: "test@example.com"\n`;
-  fs.writeFileSync(configPath, content);
+  fs.writeFileSync(configPath, `email:\n  smtp_host: "localhost"\n  smtp_port: "587"\n  from: "test@example.com"\n`);
 });
 
-Given('a non-existent config file', function () {
+Given('en icke-existerande konfigurationsfil', function () {
   configPath = '/nonexistent/path/config.yaml';
 });
 
-Given('a config file with invalid YAML', function () {
-  // Use a directory as the config path - readFileSync on a directory will throw an error
+Given('en konfigurationsfil med ogiltigt YAML', function () {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cfgtest-'));
-  // Point to the directory itself (reading a directory as a file throws an error)
   configPath = tmpDir;
 });
 
-When('loading the configuration', function () {
+When('konfigurationen laddas', function () {
   const result = loadConfig(configPath);
   loadedConfig = result.config;
   loadError = result.error;
 });
 
-Then('the provider should be {string}', function (expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('leverantören ska vara {string}', function (expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.llm.provider, expected);
 });
 
-Then('the API key should be {string}', function (_expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('API-nyckeln ska vara {string}', function (_expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
 });
 
-Then('the site URL should be {string}', function (_expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('webbplatsens URL ska vara {string}', function (_expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
 });
 
-Then('the site name should be {string}', function (_expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('webbplatsens namn ska vara {string}', function (_expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
 });
 
-Then('the default model should be {string}', function (_expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('standardmodellen ska vara {string}', function (_expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
 });
 
-Then('there should be {int} models defined', function (_expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('det ska finnas {int} modeller definierade', function (_expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
 });
 
-Then('the models count should be {int}', function (expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('antalet modeller ska vara {int}', function (expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(Object.keys(loadedConfig!.llm.models).length, expected);
 });
 
-Then('the database host should be {string}', function (expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('databashosten ska vara {string}', function (expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.database.host, expected);
 });
 
-Then('the database port should be {int}', function (expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('databasporten ska vara {int}', function (expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.database.port, expected);
 });
 
-Then('tradera should be disabled', function () {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('Tradera ska vara inaktiverat', function () {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.scraping.tradera.enabled, false);
 });
 
-Then('blocket should be disabled', function () {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('Blocket ska vara inaktiverat', function () {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.scraping.blocket.enabled, false);
 });
 
-Then('the target sell days should be {int}', function (expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('målet för säljdagar ska vara {int}', function (expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.valuation.targetSellDays, expected);
 });
 
-Then('the minimum profit margin should be {float}', function (expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('minsta vinstmarginal ska vara {float}', function (expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert(Math.abs(loadedConfig!.valuation.minProfitMargin - expected) < 0.001);
 });
 
-Then('the safety margin should be {float}', function (expected: number) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('säkerhetsmarginalen ska vara {float}', function (expected: number) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert(Math.abs(loadedConfig!.valuation.safetyMargin - expected) < 0.001);
 });
 
-Then('the SMTP host should be {string}', function (expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('SMTP-hosten ska vara {string}', function (expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.email.smtpHost, expected);
 });
 
-Then('the SMTP port should be {string}', function (expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('SMTP-porten ska vara {string}', function (expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.email.smtpPort, expected);
 });
 
-Then('the from address should be {string}', function (expected: string) {
-  assert(loadedConfig !== null, 'Config should be loaded');
+Then('avsändaradressen ska vara {string}', function (expected: string) {
+  assert(loadedConfig !== null, 'Konfigurationen ska ha laddats');
   assert.strictEqual(loadedConfig!.email.from, expected);
 });
 
-Then('a config loading error should be returned', function () {
-  assert(loadError !== null, 'Expected an error but got none');
+Then('ett konfigurationsladdningsfel ska returneras', function () {
+  assert(loadError !== null, 'Förväntade ett fel men fick inget');
 });

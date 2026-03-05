@@ -11,11 +11,9 @@ interface CronJob {
   updatedAt?: Date;
 }
 
-// Validate cron expression (simple validation)
 function isValidCronExpression(expr: string): boolean {
   const parts = expr.split(' ');
   if (parts.length !== 5) return false;
-  // Check for obviously invalid expressions
   if (expr === 'invalid') return false;
   for (const part of parts) {
     if (!/^[\d*,\-\/]+$/.test(part)) return false;
@@ -35,9 +33,7 @@ class MockCronJobDB {
     return { job: newJob, error: null };
   }
 
-  getAllJobs(): CronJob[] {
-    return this.jobs;
-  }
+  getAllJobs(): CronJob[] { return this.jobs; }
 
   getJobByID(id: number): CronJob | null {
     return this.jobs.find(j => j.id === id) || null;
@@ -48,14 +44,14 @@ class MockCronJobDB {
       return { job: null, error: new Error('invalid cron expression') };
     }
     const idx = this.jobs.findIndex(j => j.id === job.id);
-    if (idx === -1) return { job: null, error: new Error('cron job not found') };
+    if (idx === -1) return { job: null, error: new Error('schemalagt jobb hittades inte') };
     this.jobs[idx] = { ...job, updatedAt: new Date() };
     return { job: this.jobs[idx], error: null };
   }
 
   deleteJob(id: number): Error | null {
     const idx = this.jobs.findIndex(j => j.id === id);
-    if (idx === -1) return new Error('cron job not found');
+    if (idx === -1) return new Error('schemalagt jobb hittades inte');
     this.jobs.splice(idx, 1);
     return null;
   }
@@ -78,11 +74,11 @@ Before(function () {
   resultErr = null;
 });
 
-Given('a cron job service with mock database', function () {
+Given('en schemalagd-jobb-tjänst med mockdatabas', function () {
   db = new MockCronJobDB();
 });
 
-Given('the database has cron job records', function (table: any) {
+Given('databasen har schemalagda jobbposter', function (table: any) {
   for (const row of table.rows()) {
     const id = parseInt(row[0]);
     const isActive = row[4] === 'true';
@@ -99,131 +95,111 @@ Given('the database has cron job records', function (table: any) {
   }
 });
 
-When('I create a cron job with name {string}, expression {string}, search term IDs {string}, and active {word}', function (name: string, expr: string, termIDs: string, activeStr: string) {
+When('jag skapar ett schemalagt jobb med namn {string}, uttryck {string}, sökterms-ID:n {string}, och aktivt {word}', function (name: string, expr: string, termIDs: string, activeStr: string) {
   const active = activeStr === 'true';
-  const job: CronJob = {
-    id: 0,
-    name,
-    cronExpression: expr,
-    searchTermIDs: parseSearchTermIDs(termIDs),
-    isActive: active,
-  };
+  const job: CronJob = { id: 0, name, cronExpression: expr, searchTermIDs: parseSearchTermIDs(termIDs), isActive: active };
   const result = db.createJob(job);
   resultJob = result.job;
   resultErr = result.error;
 });
 
-When('I get all cron jobs', function () {
+When('jag hämtar alla schemalagda jobb', function () {
   resultJobs = db.getAllJobs();
   resultJob = null;
   resultErr = null;
 });
 
-When('I update cron job {int} to name {string}, expression {string}, search term IDs {string}, and active {word}', function (id: number, name: string, expr: string, termIDs: string, activeStr: string) {
-  const active = activeStr === 'true' || activeStr === 'false' ? activeStr === 'true' : Boolean(activeStr);
-  const job: CronJob = {
-    id,
-    name,
-    cronExpression: expr,
-    searchTermIDs: parseSearchTermIDs(termIDs),
-    isActive: active,
-  };
+When('jag uppdaterar schemalagt jobb {int} till namn {string}, uttryck {string}, sökterms-ID:n {string}, och aktivt {word}', function (id: number, name: string, expr: string, termIDs: string, activeStr: string) {
+  const active = activeStr === 'true';
+  const job: CronJob = { id, name, cronExpression: expr, searchTermIDs: parseSearchTermIDs(termIDs), isActive: active };
   const result = db.updateJob(job);
   resultJob = result.job;
   resultErr = result.error;
 });
 
-When('I delete cron job {int}', function (id: number) {
+When('jag tar bort schemalagt jobb {int}', function (id: number) {
   resultErr = db.deleteJob(id);
 });
 
-When('I toggle cron job {int} active status', function (id: number) {
+When('jag växlar aktivt tillstånd för schemalagt jobb {int}', function (id: number) {
   const job = db.getJobByID(id);
-  if (!job) {
-    resultErr = new Error('cron job not found');
-    return;
-  }
+  if (!job) { resultErr = new Error('schemalagt jobb hittades inte'); return; }
   const updated = { ...job, isActive: !job.isActive };
   const result = db.updateJob(updated);
   resultJob = result.job;
   resultErr = result.error;
 });
 
-When('I get cron job by ID {int}', function (id: number) {
+When('jag hämtar schemalagt jobb med ID {int}', function (id: number) {
   const job = db.getJobByID(id);
-  if (job) {
-    resultJobs = [job];
-    resultJob = job;
-  } else {
-    resultJobs = [];
-    resultJob = null;
-  }
+  if (job) { resultJobs = [job]; resultJob = job; }
+  else { resultJobs = []; resultJob = null; }
   resultErr = null;
 });
 
-Then('the cron job should be saved successfully', function () {
-  assert(resultErr === null, `Expected no error, got: ${resultErr?.message}`);
+Then('det schemalagda jobbet ska sparas', function () {
+  assert(resultErr === null, `Förväntade inget fel, fick: ${resultErr?.message}`);
 });
 
-Then('the cron job should have ID set', function () {
-  assert(resultJob !== null && resultJob.id > 0, 'Expected ID to be set');
+Then('det schemalagda jobbet ska ha ett ID', function () {
+  assert(resultJob !== null && resultJob.id > 0, 'Förväntade att ID är satt');
 });
 
-Then('the cron job name should be {string}', function (expected: string) {
-  assert(resultJob !== null, 'Expected job to exist');
+Then('jobbnamnet ska vara {string}', function (expected: string) {
+  assert(resultJob !== null, 'Förväntade att jobbet finns');
   assert.strictEqual(resultJob!.name, expected);
 });
 
-Then('the cron job expression should be {string}', function (expected: string) {
-  assert(resultJob !== null, 'Expected job to exist');
+Then('jobbuttrycket ska vara {string}', function (expected: string) {
+  assert(resultJob !== null, 'Förväntade att jobbet finns');
   assert.strictEqual(resultJob!.cronExpression, expected);
 });
 
-Then('the cron job should be active', function () {
-  assert(resultJob !== null, 'Expected job to exist');
-  assert(resultJob!.isActive, 'Expected isActive to be true');
+Then('jobbet ska vara aktivt', function () {
+  assert(resultJob !== null, 'Förväntade att jobbet finns');
+  assert(resultJob!.isActive, 'Förväntade isActive att vara true');
 });
 
-Then('the cron job should be inactive', function () {
-  assert(resultJob !== null, 'Expected job to exist');
-  assert(!resultJob!.isActive, 'Expected isActive to be false');
+Then('jobbet ska vara inaktivt', function () {
+  assert(resultJob !== null, 'Förväntade att jobbet finns');
+  assert(!resultJob!.isActive, 'Förväntade isActive att vara false');
 });
 
-Then('I should receive {int} cron job records', function (count: number) {
+Then('ska jag få {int} schemalagda jobbposter', function (count: number) {
   assert.strictEqual(resultJobs.length, count);
 });
 
-Then('the first cron job should have name {string}', function (expected: string) {
-  assert(resultJobs.length > 0, 'Expected at least one job');
+Then('det första schemalagda jobbet ska ha namn {string}', function (expected: string) {
+  assert(resultJobs.length > 0, 'Förväntade minst ett jobb');
   assert.strictEqual(resultJobs[0].name, expected);
 });
 
-Then('the cron job should be updated successfully', function () {
-  assert(resultErr === null, `Expected no error, got: ${resultErr?.message}`);
+Then('det schemalagda jobbet ska uppdateras', function () {
+  assert(resultErr === null, `Förväntade inget fel, fick: ${resultErr?.message}`);
 });
 
-Then('the cron job should be deleted successfully', function () {
-  assert(resultErr === null, `Expected no error, got: ${resultErr?.message}`);
+Then('det schemalagda jobbet ska tas bort', function () {
+  assert(resultErr === null, `Förväntade inget fel, fick: ${resultErr?.message}`);
 });
 
-Then('there should be {int} cron jobs in the database', function (count: number) {
+Then('det ska finnas {int} schemalagda jobb i databasen', function (count: number) {
   assert.strictEqual(db.jobs.length, count);
 });
 
-Then('the cron job should have empty search term IDs', function () {
-  assert(resultJob !== null, 'Expected job to exist');
+Then('sökterms-ID:na ska vara tomma', function () {
+  assert(resultJob !== null, 'Förväntade att jobbet finns');
   assert.strictEqual(resultJob!.searchTermIDs.length, 0);
 });
 
-Then('the error message should contain {string}', function (expected: string) {
-  assert(resultErr !== null, 'Expected an error');
-  assert(resultErr!.message.includes(expected), `Expected error to contain "${expected}", got "${resultErr!.message}"`);
+Then('ett fel ska returneras', function () {
+  assert(resultErr !== null, 'Förväntade ett fel men fick inget');
 });
 
-Then('an error should be returned', function () {
-  assert(resultErr !== null, 'Expected an error but got none');
+Then('felmeddelandet ska innehålla {string}', function (expected: string) {
+  assert(resultErr !== null, 'Förväntade ett fel');
+  assert(resultErr!.message.includes(expected), `Förväntade att felmeddelandet innehåller "${expected}", fick "${resultErr!.message}"`);
 });
 
-Then('I should receive {int} cron job record', function (count: number) {
+Then('ska jag få {int} schemalagd jobbpost', function (count: number) {
   assert.strictEqual(resultJobs.length, count);
 });

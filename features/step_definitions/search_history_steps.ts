@@ -23,13 +23,7 @@ class SearchHistoryService {
   recordSearch(searchTermID: number, searchTermDesc: string, url: string, resultsFound: number, newAdsFound: number): { record: SearchHistoryRecord | null; error: Error | null } {
     if (this.db.error) return { record: null, error: this.db.error };
     const record: SearchHistoryRecord = {
-      id: this.db.history.length + 1,
-      searchTermID,
-      searchTermDesc,
-      url,
-      resultsFound,
-      newAdsFound,
-      searchedAt: new Date(),
+      id: this.db.history.length + 1, searchTermID, searchTermDesc, url, resultsFound, newAdsFound, searchedAt: new Date(),
     };
     this.db.history.push(record);
     return { record, error: null };
@@ -41,8 +35,7 @@ class SearchHistoryService {
     const count = this.db.history.length;
     const offset = (normalizedPage - 1) * pageSize;
     if (offset >= count) return { history: [], count, error: null };
-    const end = Math.min(offset + pageSize, count);
-    return { history: this.db.history.slice(offset, end), count, error: null };
+    return { history: this.db.history.slice(offset, Math.min(offset + pageSize, count)), count, error: null };
   }
 }
 
@@ -62,142 +55,136 @@ Before(function () {
   resultError = null;
 });
 
-Given('a search history service is available', function () {
+Given('en sökhistoriktjänst är tillgänglig', function () {
   mockDB = { history: [], error: null };
   service = new SearchHistoryService(mockDB);
 });
 
-Given('the database is connected', function () {
+Given('databasen är ansluten', function () {
   mockDB.error = null;
 });
 
-When('a user searches for {string} with URL {string}', function (termDesc: string, url: string) {
+When('en användare söker efter {string} med URL:en {string}', function (termDesc: string, url: string) {
   const result = service.recordSearch(1, termDesc, url, 10, 3);
   resultRecord = result.record;
   resultError = result.error;
 });
 
-Then('the search should be saved successfully', function () {
-  assert(resultError === null, `Expected no error, got: ${resultError?.message}`);
+Then('ska sökningen sparas', function () {
+  assert(resultError === null, `Förväntade inget fel, fick: ${resultError?.message}`);
 });
 
-Then('the search should have a valid ID', function () {
-  assert(resultRecord !== null && resultRecord.id > 0, 'Expected valid ID');
+Then('sökningen ska ha ett giltigt ID', function () {
+  assert(resultRecord !== null && resultRecord.id > 0, 'Förväntade giltigt ID');
 });
 
-Then('the search term description should be {string}', function (expected: string) {
-  assert(resultRecord !== null, 'Expected record to exist');
+Then('sökbeskrivningen ska vara {string}', function (expected: string) {
+  assert(resultRecord !== null, 'Förväntade att posten finns');
   assert.strictEqual(resultRecord!.searchTermDesc, expected);
 });
 
-Then('the results found should be {int}', function (expected: number) {
-  assert(resultRecord !== null, 'Expected record to exist');
+Then('antalet hittade resultat ska vara {int}', function (expected: number) {
+  assert(resultRecord !== null, 'Förväntade att posten finns');
   assert.strictEqual(resultRecord!.resultsFound, expected);
 });
 
-Then('the new ads found should be {int}', function (expected: number) {
-  assert(resultRecord !== null, 'Expected record to exist');
+Then('antalet nya annonser ska vara {int}', function (expected: number) {
+  assert(resultRecord !== null, 'Förväntade att posten finns');
   assert.strictEqual(resultRecord!.newAdsFound, expected);
 });
 
-Given('the database has {int} search records', function (count: number) {
+Given('databasen har {int} sökposter', function (count: number) {
   mockDB.history = [];
   for (let i = 0; i < count; i++) {
     mockDB.history.push({
-      id: i + 1,
-      searchTermID: i + 1,
-      searchTermDesc: `iPhone ${15 - i}`,
-      url: `https://blocket.se/search${i}`,
-      resultsFound: 10,
-      newAdsFound: 1,
-      searchedAt: new Date(),
+      id: i + 1, searchTermID: i + 1, searchTermDesc: `iPhone ${15 - i}`,
+      url: `https://blocket.se/search${i}`, resultsFound: 10, newAdsFound: 1, searchedAt: new Date(),
     });
   }
 });
 
-When('the user requests search history for page {int} with {int} items per page', function (page: number, pageSize: number) {
+When('användaren begär sökhistorik för sida {int} med {int} poster per sida', function (page: number, pageSize: number) {
   const result = service.getHistory(page, pageSize);
   resultHistory = result.history;
   resultCount = result.count;
   resultError = result.error;
 });
 
-Then('the response should contain {int} search records', function (expected: number) {
+Then('ska svaret innehålla {int} sökposter', function (expected: number) {
   assert.strictEqual(resultHistory.length, expected);
 });
 
-Then('the total count should be {int}', function (expected: number) {
+Then('det totala antalet ska vara {int}', function (expected: number) {
   assert.strictEqual(resultCount, expected);
 });
 
-Then('the first record should have search term {string}', function (expected: string) {
-  assert(resultHistory.length > 0, 'No history records');
+Then('den första posten ska ha söktermen {string}', function (expected: string) {
+  assert(resultHistory.length > 0, 'Inga historikposter');
   assert.strictEqual(resultHistory[0].searchTermDesc, expected);
 });
 
-Given('the database has no search records', function () {
+Given('databasen har inga sökposter', function () {
   mockDB.history = [];
 });
 
-When('the user requests search history', function () {
+When('användaren begär sökhistorik', function () {
   const result = service.getHistory(1, 20);
   resultHistory = result.history;
   resultCount = result.count;
   resultError = result.error;
 });
 
-Then('the response should contain {int} items', function (expected: number) {
+Then('ska svaret innehålla {int} poster', function (expected: number) {
   assert.strictEqual(resultHistory.length, expected);
 });
 
-Then('the first item on page {int} should have ID {int}', function (_page: number, expectedID: number) {
-  assert(resultHistory.length > 0, 'No history records');
+Then('den första posten på sida {int} ska ha ID {int}', function (_page: number, expectedID: number) {
+  assert(resultHistory.length > 0, 'Inga historikposter');
   assert.strictEqual(resultHistory[0].id, expectedID);
 });
 
-When('the user requests page {int} with {int} items per page', function (page: number, pageSize: number) {
+When('användaren begär sida {int} med {int} poster per sida', function (page: number, pageSize: number) {
   const result = service.getHistory(page, pageSize);
   resultHistory = result.history;
   resultCount = result.count;
   resultError = result.error;
 });
 
-When('the user requests page {int}', function (page: number) {
+When('användaren begär sida {int}', function (page: number) {
   const result = service.getHistory(page, 20);
   resultHistory = result.history;
   resultCount = result.count;
   resultError = result.error;
 });
 
-Then('the count should be {int}', function (expected: number) {
+Then('antalet ska vara {int}', function (expected: number) {
   assert.strictEqual(resultCount, expected);
 });
 
-Given('the database is unavailable', function () {
-  mockDB.error = new Error('database unavailable');
+Given('databasen är otillgänglig', function () {
+  mockDB.error = new Error('databasen är otillgänglig');
 });
 
-When('the user attempts to record a search', function () {
+When('användaren försöker registrera en sökning', function () {
   const result = service.recordSearch(1, 'Test', 'https://...', 10, 2);
   resultRecord = result.record;
   resultError = result.error;
 });
 
-Then('a search history error should be returned', function () {
-  assert(resultError !== null, 'Expected an error but got none');
+Then('ett sökhistorikfel ska returneras', function () {
+  assert(resultError !== null, 'Förväntade ett fel men fick inget');
 });
 
-Then('the request should succeed', function () {
-  assert(resultError === null, `Expected no error, got: ${resultError?.message}`);
+Then('ska förfrågan lyckas', function () {
+  assert(resultError === null, `Förväntade inget fel, fick: ${resultError?.message}`);
 });
 
-Then('the response should contain {int} item', function (expected: number) {
-  assert.strictEqual(resultHistory.length, expected, `Expected ${expected} item, got ${resultHistory.length}`);
+Then('ska svaret innehålla {int} post', function (expected: number) {
+  assert.strictEqual(resultHistory.length, expected, `Förväntade ${expected} post, fick ${resultHistory.length}`);
 });
 
-// The search finds N results - part of the recording process (values are pre-set in the search call)
-Then('the search finds {int} results with {int} new ads', function (results: number, newAds: number) {
-  assert(resultRecord !== null, 'Expected search record to exist');
+Then('sökningen hittar {int} resultat med {int} nya annonser', function (results: number, newAds: number) {
+  assert(resultRecord !== null, 'Förväntade att sökposten finns');
   assert.strictEqual(resultRecord!.resultsFound, results);
   assert.strictEqual(resultRecord!.newAdsFound, newAds);
 });

@@ -1,62 +1,62 @@
-Feature: Search History
+Feature: Sökhistorik
 
   Background:
-    Given a search history service is available
-    And the database is connected
+    Given en sökhistoriktjänst är tillgänglig
+    And databasen är ansluten
 
-  Scenario: Record a new search
-    When a user searches for "iPhone 15 Pro" with URL "https://blocket.se/iphone"
-    And the search finds 10 results with 3 new ads
-    Then the search should be saved successfully
-    And the search should have a valid ID
-    And the search term description should be "iPhone 15 Pro"
-    And the results found should be 10
-    And the new ads found should be 3
+  Scenario: Registrera en ny sökning
+    When en användare söker efter "iPhone 15 Pro" med URL:en "https://blocket.se/iphone"
+    And sökningen hittar 10 resultat med 3 nya annonser
+    Then ska sökningen sparas
+    And sökningen ska ha ett giltigt ID
+    And sökbeskrivningen ska vara "iPhone 15 Pro"
+    And antalet hittade resultat ska vara 10
+    And antalet nya annonser ska vara 3
 
-  Scenario: Get search history with data
-    Given the database has 2 search records
-    When the user requests search history for page 1 with 20 items per page
-    Then the response should contain 2 search records
-    And the total count should be 2
-    And the first record should have search term "iPhone 15"
+  Scenario: Hämta sökhistorik med data
+    Given databasen har 2 sökposter
+    When användaren begär sökhistorik för sida 1 med 20 poster per sida
+    Then ska svaret innehålla 2 sökposter
+    And det totala antalet ska vara 2
+    And den första posten ska ha söktermen "iPhone 15"
 
-  Scenario: Get empty search history
-    Given the database has no search records
-    When the user requests search history
-    Then the response should contain 0 search records
-    And the total count should be 0
+  Scenario: Hämta tom sökhistorik
+    Given databasen har inga sökposter
+    When användaren begär sökhistorik
+    Then ska svaret innehålla 0 sökposter
+    And det totala antalet ska vara 0
 
-  Scenario: Paginate search history
-    Given the database has 5 search records
-    When the user requests page 1 with 2 items per page
-    Then the response should contain 2 items
-    And the total count should be 5
-    When the user requests page 2 with 2 items per page
-    Then the response should contain 2 items
-    And the first item on page 2 should have ID 3
-    When the user requests page 3 with 2 items per page
-    Then the response should contain 1 item
+  Scenario: Paginera sökhistorik
+    Given databasen har 5 sökposter
+    When användaren begär sida 1 med 2 poster per sida
+    Then ska svaret innehålla 2 poster
+    And det totala antalet ska vara 5
+    When användaren begär sida 2 med 2 poster per sida
+    Then ska svaret innehålla 2 poster
+    And den första posten på sida 2 ska ha ID 3
+    When användaren begär sida 3 med 2 poster per sida
+    Then ska svaret innehålla 1 post
 
-  Scenario: Handle invalid pagination parameters
-    Given the database has no search records
-    When the user requests page 0
-    Then the request should succeed
-    And the count should be 0
-    When the user requests page -1
-    Then the request should succeed
-    And the count should be 0
+  Scenario: Hantera ogiltiga pagineringsparametrar
+    Given databasen har inga sökposter
+    When användaren begär sida 0
+    Then ska förfrågan lyckas
+    And antalet ska vara 0
+    When användaren begär sida -1
+    Then ska förfrågan lyckas
+    And antalet ska vara 0
 
-  Scenario: Handle database error when recording search
-    Given the database is unavailable
-    When the user attempts to record a search
-    Then a search history error should be returned
+  Scenario: Hantera databasfel vid registrering av sökning
+    Given databasen är otillgänglig
+    When användaren försöker registrera en sökning
+    Then ett sökhistorikfel ska returneras
 
-  Scenario: Handle database error when getting history
-    Given the database is unavailable
-    When the user requests search history
-    Then a search history error should be returned
+  Scenario: Hantera databasfel vid hämtning av historik
+    Given databasen är otillgänglig
+    When användaren begär sökhistorik
+    Then ett sökhistorikfel ska returneras
 
-  Scenario: Large page size handling
-    Given the database has no search records
-    When the user requests page 1 with 200 items per page
-    Then the request should succeed
+  Scenario: Hantera stor sidstorlek
+    Given databasen har inga sökposter
+    When användaren begär sida 1 med 200 poster per sida
+    Then ska förfrågan lyckas

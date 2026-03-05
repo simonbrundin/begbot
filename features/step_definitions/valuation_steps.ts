@@ -1,7 +1,6 @@
 import { Given, When, Then, Before } from '@cucumber/cucumber';
 import assert from 'assert';
 
-// Valuation types and calculation logic (TypeScript port of Go implementation)
 interface ValuationInput {
   type: string;
   value: number;
@@ -23,15 +22,10 @@ interface HistoricalValuation {
 function compileWeightedAverage(inputs: ValuationInput[]): ValuationOutput {
   const valid = inputs.filter(i => i.value > 0 && i.confidence > 0);
   if (valid.length === 0) return { recommendedPrice: 0, confidence: 0 };
-  
   const totalWeight = valid.reduce((sum, i) => sum + i.confidence, 0);
   const weightedPrice = valid.reduce((sum, i) => sum + i.value * i.confidence, 0);
   const weightedConf = valid.reduce((sum, i) => sum + i.confidence * i.confidence, 0);
-  
-  return {
-    recommendedPrice: weightedPrice / totalWeight,
-    confidence: weightedConf / totalWeight,
-  };
+  return { recommendedPrice: weightedPrice / totalWeight, confidence: weightedConf / totalWeight };
 }
 
 function calculatePriceForDays(days: number, valuation: HistoricalValuation): number {
@@ -43,15 +37,8 @@ function calculateProfit(buyPrice: number, shippingCost: number, _insuranceCost:
   return sellPrice - buyPrice - shippingCost;
 }
 
-function calculateProfitMargin(profit: number, cost: number): number {
-  if (cost === 0) return 0;
-  return profit / cost;
-}
-
 function estimateSellProbability(daysOnMarket: number, targetDays: number, kValue: number): number {
-  if (kValue >= 0) {
-    return Math.max(0.5 - (targetDays - daysOnMarket) * 0.05, 0.1);
-  }
+  if (kValue >= 0) return Math.max(0.5 - (targetDays - daysOnMarket) * 0.05, 0.1);
   return Math.min(0.5 + (targetDays - daysOnMarket) * 0.05, 0.95);
 }
 
@@ -75,171 +62,140 @@ Before(function () {
   shippingCost = 0;
 });
 
-Given('a valuation compiler is available', function () {
-  // Nothing to set up
-});
+Given('en värderingskompilator är tillgänglig', function () {});
 
-Given('the following valuation inputs:', function (table: any) {
+Given('följande värderingsindata:', function (table: any) {
   inputs = [];
   for (const row of table.rows()) {
-    if (row[0] === 'type') continue; // skip header
-    inputs.push({
-      type: row[0],
-      value: parseFloat(row[1]),
-      confidence: parseFloat(row[2]),
-    });
+    if (row[0] === 'type') continue;
+    inputs.push({ type: row[0], value: parseFloat(row[1]), confidence: parseFloat(row[2]) });
   }
 });
 
-When('the compiler calculates the weighted average', function () {
+When('kompilatorn beräknar det viktade genomsnittet', function () {
   result = compileWeightedAverage(inputs);
 });
 
-Then('the recommended price should be between {float} and {float}', function (min: number, max: number) {
-  assert(result !== null, 'No result');
+Then('ska det rekommenderade priset vara mellan {float} och {float}', function (min: number, max: number) {
+  assert(result !== null, 'Inget resultat');
   assert(result!.recommendedPrice >= min && result!.recommendedPrice <= max,
-    `Expected price between ${min} and ${max}, got ${result!.recommendedPrice}`);
+    `Förväntade pris mellan ${min} och ${max}, fick ${result!.recommendedPrice}`);
 });
 
-Then('the confidence should be between {float} and {float}', function (min: number, max: number) {
-  assert(result !== null, 'No result');
+Then('förtroendet ska vara mellan {float} och {float}', function (min: number, max: number) {
+  assert(result !== null, 'Inget resultat');
   assert(result!.confidence >= min && result!.confidence <= max,
-    `Expected confidence between ${min} and ${max}, got ${result!.confidence}`);
+    `Förväntade förtroende mellan ${min} och ${max}, fick ${result!.confidence}`);
 });
 
-Given('a single valuation input with value {float} and confidence {float}', function (value: number, confidence: number) {
+Given('ett enda värderingsindata med värdet {float} och förtroendet {float}', function (value: number, confidence: number) {
   inputs = [{ type: 'Method1', value, confidence }];
 });
 
-Then('the recommended price should be {float}', function (expected: number) {
-  assert(result !== null, 'No result');
+Then('ska det rekommenderade priset vara {float}', function (expected: number) {
+  assert(result !== null, 'Inget resultat');
   assert(Math.abs(result!.recommendedPrice - expected) < 0.001,
-    `Expected price ${expected}, got ${result!.recommendedPrice}`);
+    `Förväntade pris ${expected}, fick ${result!.recommendedPrice}`);
 });
 
-Then('the confidence should be {float}', function (expected: number) {
-  assert(result !== null, 'No result');
+Then('förtroendet ska vara {float}', function (expected: number) {
+  assert(result !== null, 'Inget resultat');
   assert(Math.abs(result!.confidence - expected) < 0.001,
-    `Expected confidence ${expected}, got ${result!.confidence}`);
+    `Förväntade förtroende ${expected}, fick ${result!.confidence}`);
 });
 
-Given('no valuation inputs', function () {
+Given('inga värderingsindata', function () {
   inputs = [];
 });
 
-Given('a historical valuation with K-value {float} and intercept {float}', function (k: number, intercept: number) {
+Given('en historisk värdering med K-värde {float} och interceptet {float}', function (k: number, intercept: number) {
   historicalVal = { hasData: true, kValue: k, intercept, averagePrice: intercept };
 });
 
-When('calculating the price for {int} days', function (days: number) {
-  if (historicalVal) {
-    result = { recommendedPrice: calculatePriceForDays(days, historicalVal), confidence: 0 };
-  }
+When('priset för {int} dagar beräknas', function (days: number) {
+  if (historicalVal) result = { recommendedPrice: calculatePriceForDays(days, historicalVal), confidence: 0 };
 });
 
-Then('the price should be {float}', function (expected: number) {
-  assert(result !== null, 'No result');
+Then('ska priset vara {float}', function (expected: number) {
+  assert(result !== null, 'Inget resultat');
   assert(Math.abs(result!.recommendedPrice - expected) < 0.001,
-    `Expected price ${expected}, got ${result!.recommendedPrice}`);
+    `Förväntade pris ${expected}, fick ${result!.recommendedPrice}`);
 });
 
-Given('a historical valuation with no data', function () {
+Given('en historisk värdering utan data', function () {
   historicalVal = { hasData: false, kValue: 0, intercept: 0, averagePrice: 0 };
 });
 
-Given('a purchase price of {int} SEK', function (price: number) {
+Given('ett inköpspris på {int} SEK', function (price: number) {
   buyPrice = price;
-  inputs = [{ type: 'purchase', value: price, confidence: 1 }];
 });
 
-Given('shipping cost of {int} SEK', function (cost: number) {
+Given('fraktkostnad på {int} SEK', function (cost: number) {
   shippingCost = cost;
 });
 
-Given('estimated sell price of {int} SEK', function (sellPrice: number) {
+Given('uppskattat säljpris på {int} SEK', function (sellPrice: number) {
   profit = calculateProfit(buyPrice, shippingCost, 0, sellPrice);
 });
 
-When('calculating the profit', function () {
-  // Already calculated
-});
+When('vinsten beräknas', function () {});
 
-Then('the profit should be {int} SEK', function (expected: number) {
+Then('ska beräknad vinst vara {int} SEK', function (expected: number) {
   assert.strictEqual(Math.round(profit), expected);
 });
 
-Given('a profit of {int} SEK', function (p: number) {
+Given('en vinst på {int} SEK', function (p: number) {
   profit = p;
 });
 
-Given('total cost of {int} SEK', function (cost: number) {
+Given('en totalkostnad på {int} SEK', function (cost: number) {
   profitMargin = cost > 0 ? profit / cost : 0;
 });
 
-When('calculating the profit margin', function () {
-  // Already calculated
-});
+When('vinstmarginalen beräknas', function () {});
 
-Then('the margin should be approximately {float}', function (expected: number) {
+Then('ska marginalen vara ungefär {float}', function (expected: number) {
   assert(Math.abs(profitMargin - expected) < 0.001,
-    `Expected margin ${expected}, got ${profitMargin}`);
+    `Förväntade marginal ${expected}, fick ${profitMargin}`);
 });
 
-Then('the margin should be {int}', function (expected: number) {
+Then('ska marginalen vara {int}', function (expected: number) {
   assert.strictEqual(Math.floor(profitMargin), expected);
 });
 
-Given('K value is {float} \\(price drops over time)', function (k: number) {
+Given('K-värdet är {float} \\(priset sjunker med tid)', function (k: number) {
   historicalVal = { hasData: true, kValue: k, intercept: 0, averagePrice: 0 };
 });
 
-Given('K value is {float} \\(price increases over time)', function (k: number) {
+Given('K-värdet är {float} \\(priset stiger med tid)', function (k: number) {
   historicalVal = { hasData: true, kValue: k, intercept: 0, averagePrice: 0 };
 });
 
-When('estimating sell probability for {int} days with target {int} days', function (days: number, target: number) {
-  if (historicalVal) {
-    sellProbability = estimateSellProbability(days, target, historicalVal.kValue);
-  }
+When('säljsannolikheten uppskattas för {int} dagar med mål {int} dagar', function (days: number, target: number) {
+  if (historicalVal) sellProbability = estimateSellProbability(days, target, historicalVal.kValue);
 });
 
-Then('the probability should be {float}', function (expected: number) {
+Then('ska sannolikheten vara {float}', function (expected: number) {
   assert(Math.abs(sellProbability - expected) < 0.001,
-    `Expected probability ${expected}, got ${sellProbability}`);
+    `Förväntade sannolikhet ${expected}, fick ${sellProbability}`);
 });
 
-Given('a database valuation method', function () {
-  // Simulated
+Given('en databasvärderingsmetod', function () {});
+When('metodnamnet hämtas', function () {});
+
+Then('ska namnet vara {string}', function (_expected: string) {
+  assert(true, 'Metodnamnskontroll simulerad');
 });
 
-When('getting the method name', function () {
-  // Simulated
+Then('prioriteten ska vara {int}', function (_expected: number) {
+  assert(true, 'Prioritetskontroll simulerad');
 });
 
-Then('the name should be {string}', function (_expected: string) {
-  // Simulated - documented behavior
-  assert(true, 'Method name check simulated');
-});
+Given('en LLM-nyprismetod', function () {});
+Given('en Tradera-värderingsmetod', function () {});
+Given('en metod för sålda annonser', function () {});
 
-Then('the priority should be {int}', function (_expected: number) {
-  // Simulated - documented behavior
-  assert(true, 'Method priority check simulated');
-});
-
-Given('an LLM new price method', function () {
-  // Simulated
-});
-
-Given('a Tradera valuation method', function () {
-  // Simulated
-});
-
-Given('a sold ads valuation method', function () {
-  // Simulated
-});
-
-Given('a database valuation method with {int} sold items', function (count: number) {
-  // Simulate confidence calculation
+Given('en databasvärderingsmetod med {int} sålda artiklar', function (count: number) {
   let confidence = 0;
   if (count >= 8) confidence = 0.7;
   else if (count >= 4) confidence = 0.5;
@@ -247,55 +203,54 @@ Given('a database valuation method with {int} sold items', function (count: numb
   result = { recommendedPrice: 0, confidence };
 });
 
-When('calculating confidence', function () {
-  // Already calculated
+When('förtroendet beräknas', function () {});
+
+Then('ska förtroendet vara {float}', function (expected: number) {
+  assert(result !== null, 'Inget resultat');
+  assert(Math.abs(result!.confidence - expected) < 0.001,
+    `Förväntade förtroende ${expected}, fick ${result!.confidence}`);
 });
 
-Given('sold items with prices {int} SEK, {int} SEK, and {int} SEK', function (_p1: number, _p2: number, _p3: number) {
-  // Simulated - prices in ören in database, should be converted to SEK
-});
+Given('sålda artiklar med priserna {int} SEK, {int} SEK och {int} SEK', function (_p1: number, _p2: number, _p3: number) {});
 
-When('calculating the estimated price', function () {
+When('det uppskattade priset beräknas', function () {
   result = { recommendedPrice: 125, confidence: 0.5 };
 });
 
-Then('the price should be in SEK \\(not ören)', function () {
-  assert(result !== null, 'No result');
-  assert(result!.recommendedPrice < 500, `Price ${result!.recommendedPrice} is too high, likely in ören not SEK`);
+Then('ska priset vara i SEK och inte i öre', function () {
+  assert(result !== null, 'Inget resultat');
+  assert(result!.recommendedPrice < 500, `Priset ${result!.recommendedPrice} är för högt, förmodligen i öre`);
 });
 
-Given('valuation inputs with zero value or confidence', function () {
+Given('värderingsindata med nollvärde eller nollförtroende', function () {
   inputs = [
     { type: 'Method1', value: 0, confidence: 0.8 },
     { type: 'Method2', value: 1000, confidence: 0 },
   ];
 });
 
-When('compiling the valuation', function () {
+When('värderingen kompileras', function () {
   result = compileWeightedAverage(inputs);
 });
 
-Given('valuation inputs with value {int} and confidence {float}', function (value: number, confidence: number) {
+Given('värderingsindata med värdet {int} och förtroendet {float}', function (value: number, confidence: number) {
   inputs = [{ type: 'database', value, confidence }];
 });
 
-Given('new price of {int}', function (_price: number) {
-  // Stored for validation context
+Given('nypriset är {int}', function (_price: number) {});
+
+Then('ska inget värderingsfel inträffa', function () {
+  assert(result !== null, 'Förväntade ett resultat');
 });
 
-Then('no valuation error should occur', function () {
-  assert(result !== null, 'Expected a result');
-});
-
-Given('a valuation input with value {int} and confidence {float}', function (value: number, confidence: number) {
+Given('ett värderingsindata med värdet {int} och förtroendet {float}', function (value: number, confidence: number) {
   inputs = [{ type: 'database', value, confidence }];
 });
 
-When('compiling the weighted average', function () {
+When('det viktade genomsnittet kompileras', function () {
   result = compileWeightedAverage(inputs);
 });
 
-Then('a warning should be logged for unreasonable valuation', function () {
-  // Simulated - documented behavior for when valuation > 10x new price
-  assert(true, 'Warning logging is simulated');
+Then('ska en varning loggas för orimlig värdering', function () {
+  assert(true, 'Varningsloggning är simulerad');
 });

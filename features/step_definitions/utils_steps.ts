@@ -41,27 +41,27 @@ Before(function () {
   profitResult = 0;
 });
 
-Given('the amount {int} öre', function (amount: number) {
+Given('beloppet {int} öre', function (amount: number) {
   amountOre = amount;
 });
 
-When('I format it as currency', function () {
+When('jag formaterar det som valuta', function () {
   currencyResult = formatCurrency(amountOre);
 });
 
-Then('the result should be {string}', function (expected: string) {
+Then('ska resultatet vara {string}', function (expected: string) {
   assert.strictEqual(currencyResult || dateResult, expected);
 });
 
-Given('the date {string}', function (date: string) {
+Given('datumet {string}', function (date: string) {
   dateStr = date;
 });
 
-When('I format it as a date', function () {
+When('jag formaterar det som ett datum', function () {
   dateResult = formatDate(dateStr);
 });
 
-Given('a trade item with:', function (table: any) {
+Given('ett handelsobjekt med:', function (table: any) {
   tradeItem = { buy_price: 0, buy_shipping_cost: 0, sell_price: null, sell_packaging_cost: null, sell_postage_cost: null, sell_shipping_collected: null };
   for (const row of table.rows()) {
     const [field, value] = row;
@@ -70,14 +70,14 @@ Given('a trade item with:', function (table: any) {
   }
 });
 
-Given('a trade item with buy_price {int} and no sell price', function (buyPrice: number) {
+Given('ett handelsobjekt med köppris {int} och inget säljpris', function (buyPrice: number) {
   tradeItem = { buy_price: buyPrice, buy_shipping_cost: 0, sell_price: null, sell_packaging_cost: null, sell_postage_cost: null, sell_shipping_collected: null };
 });
 
-When('I calculate the profit', function () {
+When('jag beräknar vinsten', function () {
   profitResult = calculateProfit(tradeItem);
 });
 
-Then('the profit should be {int}', function (expected: number) {
-  assert.strictEqual(profitResult, expected, `Expected profit ${expected}, got ${profitResult}`);
+Then('ska vinsten vara {int}', function (expected: number) {
+  assert.strictEqual(profitResult, expected, `Förväntade vinst ${expected}, fick ${profitResult}`);
 });

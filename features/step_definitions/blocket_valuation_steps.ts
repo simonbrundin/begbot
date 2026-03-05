@@ -17,40 +17,17 @@ function calculateQuartiles(prices: number[]): [number, number, number] {
   if (prices.length === 0) return [0, 0, 0];
   const sorted = [...prices].sort((a, b) => a - b);
   const n = sorted.length;
-  
   const q1Index = Math.floor(n / 4);
   const q3Index = Math.floor(3 * n / 4);
-  
   let q1: number;
-  if (q1Index > 0 && q1Index < n) {
-    q1 = sorted[q1Index - 1];
-  } else if (q1Index < n) {
-    q1 = sorted[q1Index];
-  } else {
-    q1 = 0;
-  }
-  
+  if (q1Index > 0 && q1Index < n) q1 = sorted[q1Index - 1];
+  else if (q1Index < n) q1 = sorted[q1Index];
+  else q1 = 0;
   let q3: number;
-  if (q3Index > 0 && q3Index < n) {
-    q3 = sorted[q3Index - 1];
-  } else if (q3Index < n) {
-    q3 = sorted[q3Index];
-  } else {
-    q3 = 0;
-  }
-  
+  if (q3Index > 0 && q3Index < n) q3 = sorted[q3Index - 1];
+  else if (q3Index < n) q3 = sorted[q3Index];
+  else q3 = 0;
   return [q1, q3, q3 - q1];
-}
-
-function calculatePercentile(sorted: number[], percentile: number): number {
-  if (sorted.length === 0) return 0;
-  if (sorted.length === 1) return sorted[0];
-  const index = percentile * (sorted.length - 1);
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-  if (lower === upper) return sorted[lower];
-  const frac = index - lower;
-  return Math.round(sorted[lower] + frac * (sorted[upper] - sorted[lower]));
 }
 
 function calculateMedian(prices: number[]): number {
@@ -76,11 +53,7 @@ function valuateFromDocs(docs: BlocketDoc[]): ValuationResult | null {
   if (filtered.length === 0) return null;
   const value = calculateMedian(filtered);
   const confidence = filtered.length >= 10 ? 0.7 : filtered.length >= 5 ? 0.5 : 0.3;
-  return {
-    value,
-    confidence,
-    metadata: { total_count: prices.length, filtered_count: filtered.length },
-  };
+  return { value, confidence, metadata: { total_count: prices.length, filtered_count: filtered.length } };
 }
 
 let blocketEnabled: boolean = false;
@@ -111,53 +84,48 @@ Before(function () {
   medianResult = 0;
 });
 
-Given('Blocket valuation is enabled', function () {
+Given('Blocket-värdering är aktiverad', function () {
   blocketEnabled = true;
 });
 
-Given('Blocket valuation is disabled', function () {
+Given('Blocket-värdering är inaktiverad', function () {
   blocketEnabled = false;
 });
 
-Given('the Blocket API returns {int} listings with prices between {int} and {int} SEK', function (count: number, minPrice: number, maxPrice: number) {
+Given('Blocket-API:et returnerar {int} annonser med priser mellan {int} och {int} SEK', function (count: number, minPrice: number, maxPrice: number) {
   mockDocs = Array.from({ length: count }, (_, i) => ({
     id: String(i + 1),
     price: Math.floor(minPrice + (maxPrice - minPrice) * (i / count)),
-    heading: `Test product ${i + 1}`,
+    heading: `Testprodukt ${i + 1}`,
   }));
 });
 
-Given('the Blocket API returns listings with outliers:', function (table: any) {
+Given('Blocket-API:et returnerar annonser med extremvärden:', function (table: any) {
   mockDocs = [];
   for (const row of table.rows()) {
-    mockDocs.push({
-      id: row[0],
-      price: parseInt(row[1]),
-      heading: `Listing ${row[0]}`,
-    });
+    mockDocs.push({ id: row[0], price: parseInt(row[1]), heading: `Annons ${row[0]}` });
   }
 });
 
-Given('the Blocket API returns no listings', function () {
+Given('Blocket-API:et returnerar inga annonser', function () {
   mockDocs = [];
 });
 
-Given('the Blocket API is available', function () {
-  // Set up some default mock data for caching test
+Given('Blocket-API:et är tillgängligt', function () {
   if (mockDocs.length === 0) {
-    mockDocs = [{ id: '1', price: 1000, heading: 'Test product' }];
+    mockDocs = [{ id: '1', price: 1000, heading: 'Testprodukt' }];
   }
 });
 
-Given('the Blocket API returns listings for the model', function () {
+Given('Blocket-API:et returnerar annonser för modellen', function () {
   mockDocs = [
-    { id: '1', price: 500, heading: 'Product only' },
-    { id: '2', price: 600, heading: 'Product only' },
-    { id: '3', price: 700, heading: 'Product only' },
+    { id: '1', price: 500, heading: 'Produkt' },
+    { id: '2', price: 600, heading: 'Produkt' },
+    { id: '3', price: 700, heading: 'Produkt' },
   ];
 });
 
-When('I valuate a product on Blocket', function () {
+When('jag värderar en produkt på Blocket', function () {
   if (!blocketEnabled) {
     valuationResult = null;
     valuationError = null;
@@ -165,128 +133,121 @@ When('I valuate a product on Blocket', function () {
   }
   if (mockDocs.length === 0) {
     valuationResult = null;
-    valuationError = new Error('no prices found');
+    valuationError = new Error('inga priser hittades');
     return;
   }
   valuationResult = valuateFromDocs(mockDocs);
-  valuationError = valuationResult ? null : new Error('no prices found');
+  valuationError = valuationResult ? null : new Error('inga priser hittades');
   callCount++;
 });
 
-When('I valuate the same product twice', function () {
-  if (!blocketEnabled) {
-    valuationResult = null;
-    return;
-  }
+When('jag värderar samma produkt två gånger', function () {
+  if (!blocketEnabled) { valuationResult = null; return; }
   callCount = 0;
   valuationResult = valuateFromDocs(mockDocs);
   callCount++;
-  cachedResult = valuationResult; // second call returns cache
-  callCount++; // simulate second request but from cache (count = 2, <= 5 is ok)
+  cachedResult = valuationResult;
+  callCount++;
 });
 
-When('I valuate a product with only a model name', function () {
-  if (!blocketEnabled) {
-    valuationResult = null;
-    return;
-  }
+When('jag värderar en produkt med enbart ett modellnamn', function () {
+  if (!blocketEnabled) { valuationResult = null; return; }
   valuationResult = valuateFromDocs(mockDocs);
-  valuationError = valuationResult ? null : new Error('no prices found');
+  valuationError = valuationResult ? null : new Error('inga priser hittades');
 });
 
-Then('the valuation should have a positive value', function () {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
-  assert(valuationResult!.value > 0, `Expected positive value, got ${valuationResult!.value}`);
+Then('värderingen ska ha ett positivt värde', function () {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
+  assert(valuationResult!.value > 0, `Förväntade positivt värde, fick ${valuationResult!.value}`);
 });
 
-Then('the confidence should be at least {float} for {int} or more items', function (minConf: number, _minItems: number) {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
+Then('förtroendet ska vara minst {float} för {int} eller fler artiklar', function (minConf: number, _minItems: number) {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
   assert(valuationResult!.confidence >= minConf,
-    `Expected confidence >= ${minConf}, got ${valuationResult!.confidence}`);
+    `Förväntade förtroende >= ${minConf}, fick ${valuationResult!.confidence}`);
 });
 
-Then('the valuation should be less than {int}', function (maxValue: number) {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
+Then('värderingen ska vara mindre än {int}', function (maxValue: number) {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
   assert(valuationResult!.value < maxValue,
-    `Expected valuation < ${maxValue}, got ${valuationResult!.value}`);
+    `Förväntade värdering < ${maxValue}, fick ${valuationResult!.value}`);
 });
 
-Then('outlier prices should be filtered out', function () {
-  assert(valuationResult !== null, 'Expected non-nil valuation');
+Then('extrempriser ska ha filtrerats bort', function () {
+  assert(valuationResult !== null, 'Förväntade icke-null värdering');
   if (valuationResult!.metadata) {
-    const filteredCount = valuationResult!.metadata['filtered_count'];
-    assert(filteredCount > 0, 'Expected some prices to be filtered');
+    assert(valuationResult!.metadata['filtered_count'] > 0, 'Förväntade att priser filtrerats');
   }
 });
 
-Then('the valuation should be nil', function () {
-  assert(valuationResult === null, `Expected nil valuation, got ${JSON.stringify(valuationResult)}`);
+Then('Blocket-värderingen ska vara null', function () {
+  assert(valuationResult === null, `Förväntade null värdering, fick ${JSON.stringify(valuationResult)}`);
 });
 
-Then('no Blocket error should be returned', function () {
-  assert(valuationError === null, `Expected no error, got: ${valuationError?.message}`);
+Then('inget Blocket-fel ska returneras', function () {
+  assert(valuationError === null, `Förväntade inget fel, fick: ${valuationError?.message}`);
 });
 
-Then('a Blocket error should be returned', function () {
-  assert(valuationError !== null, 'Expected an error but got none');
+Then('ett Blocket-fel ska returneras', function () {
+  assert(valuationError !== null, 'Förväntade ett fel men fick inget');
 });
 
-Then('only one API request should be made', function () {
-  assert(callCount <= 5, `Expected at most 5 requests (cached), got ${callCount}`);
+Then('ska bara ett API-anrop göras', function () {
+  assert(callCount <= 5, `Förväntade högst 5 anrop (cachat), fick ${callCount}`);
 });
 
-Then('both valuations should have the same value', function () {
-  assert(valuationResult !== null && cachedResult !== null, 'Both results should exist');
-  assert.strictEqual(valuationResult!.value, cachedResult!.value, 'Cached result should have same value');
+Then('båda värderingarna ska ha samma värde', function () {
+  assert(valuationResult !== null && cachedResult !== null, 'Båda resultat ska finnas');
+  assert.strictEqual(valuationResult!.value, cachedResult!.value, 'Cachat resultat ska ha samma värde');
 });
 
-Given('prices: {int}, {int}, {int}, {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number, p6: number, p7: number, p8: number) {
+Given('priser: {int}, {int}, {int}, {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number, p6: number, p7: number, p8: number) {
   priceList = [p1, p2, p3, p4, p5, p6, p7, p8];
 });
 
-When('I calculate quartiles', function () {
+When('jag beräknar kvartilerna', function () {
   const [q1, q3, iqr] = calculateQuartiles(priceList);
   q1Result = q1;
   q3Result = q3;
   iqrResult = iqr;
 });
 
-Then('Q1 should be {int}', function (expected: number) {
-  assert.strictEqual(q1Result, expected, `Expected Q1=${expected}, got ${q1Result}`);
+Then('Q1 ska vara {int}', function (expected: number) {
+  assert.strictEqual(q1Result, expected, `Förväntade Q1=${expected}, fick ${q1Result}`);
 });
 
-Then('Q3 should be {int}', function (expected: number) {
-  assert.strictEqual(q3Result, expected, `Expected Q3=${expected}, got ${q3Result}`);
+Then('Q3 ska vara {int}', function (expected: number) {
+  assert.strictEqual(q3Result, expected, `Förväntade Q3=${expected}, fick ${q3Result}`);
 });
 
-Then('IQR should be {int}', function (expected: number) {
-  assert.strictEqual(iqrResult, expected, `Expected IQR=${expected}, got ${iqrResult}`);
+Then('IQR ska vara {int}', function (expected: number) {
+  assert.strictEqual(iqrResult, expected, `Förväntade IQR=${expected}, fick ${iqrResult}`);
 });
 
-Given('prices with outlier: {int}, {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number, p6: number) {
+Given('priser med extremvärde: {int}, {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number, p6: number) {
   priceList = [p1, p2, p3, p4, p5, p6];
 });
 
-When('I filter outliers using IQR', function () {
+When('jag filtrerar extremvärden med IQR', function () {
   filteredPrices = filterOutliersIQR(priceList);
 });
 
-Then('{int} prices should remain', function (expected: number) {
-  assert.strictEqual(filteredPrices.length, expected, `Expected ${expected} prices, got ${filteredPrices.length}`);
+Then('ska {int} priser återstå', function (expected: number) {
+  assert.strictEqual(filteredPrices.length, expected, `Förväntade ${expected} priser, fick ${filteredPrices.length}`);
 });
 
-Given('an odd-length price list: {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number) {
+Given('en prislista med ojämnt antal element: {int}, {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number, p5: number) {
   priceList = [p1, p2, p3, p4, p5];
 });
 
-Given('an even-length price list: {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number) {
+Given('en prislista med jämnt antal element: {int}, {int}, {int}, {int}', function (p1: number, p2: number, p3: number, p4: number) {
   priceList = [p1, p2, p3, p4];
 });
 
-When('I calculate the median', function () {
+When('jag beräknar medianen', function () {
   medianResult = calculateMedian(priceList);
 });
 
-Then('the median should be {int}', function (expected: number) {
-  assert.strictEqual(medianResult, expected, `Expected median=${expected}, got ${medianResult}`);
+Then('medianen ska vara {int}', function (expected: number) {
+  assert.strictEqual(medianResult, expected, `Förväntade median=${expected}, fick ${medianResult}`);
 });

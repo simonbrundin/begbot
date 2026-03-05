@@ -1,7 +1,6 @@
 import { Given, When, Then, Before } from '@cucumber/cucumber';
 import assert from 'assert';
 
-// VimNavigation implementation matching the expected API from the tests
 interface VimNavigation {
   setFocused: (focused: boolean) => void;
   moveDown: () => void;
@@ -20,29 +19,20 @@ function createVimNavigation(itemCount: number): VimNavigation {
     setFocused(f: boolean) { focused = f; },
     moveDown() {
       if (!focused || count === 0) return;
-      if (selectedIndex === null) {
-        selectedIndex = 0;
-      } else {
-        selectedIndex = Math.min(selectedIndex + 1, count - 1);
-      }
+      if (selectedIndex === null) selectedIndex = 0;
+      else selectedIndex = Math.min(selectedIndex + 1, count - 1);
     },
     moveUp() {
       if (!focused || count === 0) return;
-      if (selectedIndex === null) {
-        selectedIndex = count - 1;
-      } else {
-        selectedIndex = Math.max(selectedIndex - 1, 0);
-      }
+      if (selectedIndex === null) selectedIndex = count - 1;
+      else selectedIndex = Math.max(selectedIndex - 1, 0);
     },
     getSelectedIndex() { return selectedIndex; },
     clearSelection() { selectedIndex = null; },
     setItemCount(newCount: number) {
       count = newCount;
-      if (count === 0) {
-        selectedIndex = null;
-      } else if (selectedIndex !== null && selectedIndex >= count) {
-        selectedIndex = count - 1;
-      }
+      if (count === 0) selectedIndex = null;
+      else if (selectedIndex !== null && selectedIndex >= count) selectedIndex = count - 1;
     },
   };
 }
@@ -53,97 +43,91 @@ Before(function () {
   nav = createVimNavigation(0);
 });
 
-Given('a list with {int} items', function (count: number) {
+Given('en lista med {int} poster', function (count: number) {
   nav = createVimNavigation(count);
 });
 
-Given('a list with {int} item', function (count: number) {
+Given('en lista med {int} post', function (count: number) {
   nav = createVimNavigation(count);
 });
 
-Given('the navigation is focused', function () {
+Given('navigeringen är fokuserad', function () {
   nav.setFocused(true);
 });
 
-Given('the navigation is not focused', function () {
+Given('navigeringen är inte fokuserad', function () {
   nav.setFocused(false);
 });
 
-When('I press j', function () {
+When('jag trycker på j', function () {
   nav.moveDown();
 });
 
-When('I press j again', function () {
+When('jag trycker på j igen', function () {
   nav.moveDown();
 });
 
-When('I press k', function () {
+When('jag trycker på k', function () {
   nav.moveUp();
 });
 
-When('I press k again', function () {
+When('jag trycker på k igen', function () {
   nav.moveUp();
 });
 
-When('I navigate down to index {int}', function (targetIndex: number) {
-  for (let i = 0; i <= targetIndex; i++) {
-    nav.moveDown();
-  }
+When('jag navigerar ned till index {int}', function (targetIndex: number) {
+  for (let i = 0; i <= targetIndex; i++) nav.moveDown();
 });
 
-When('I navigate to the last item', function () {
-  for (let i = 0; i < 10; i++) {
-    nav.moveDown();
-  }
+When('jag navigerar till sista posten', function () {
+  for (let i = 0; i < 10; i++) nav.moveDown();
 });
 
-When('I navigate to index {int}', function (targetIndex: number) {
-  for (let i = 0; i <= targetIndex; i++) {
-    nav.moveDown();
-  }
+When('jag navigerar till index {int}', function (targetIndex: number) {
+  for (let i = 0; i <= targetIndex; i++) nav.moveDown();
 });
 
-When('I set focus to true and press j', function () {
+When('jag ställer in fokus till true och trycker på j', function () {
   nav.setFocused(true);
   nav.moveDown();
 });
 
-When('I set focus to false and press j', function () {
+When('jag ställer in fokus till false och trycker på j', function () {
   nav.setFocused(false);
   nav.moveDown();
 });
 
-When('I press j to select index {int}', function (_index: number) {
+When('jag trycker på j för att välja index {int}', function (_index: number) {
   nav.moveDown();
 });
 
-When('I clear the selection', function () {
+When('jag rensar markeringen', function () {
   nav.clearSelection();
 });
 
-When('the item count changes to {int}', function (newCount: number) {
+When('antalet poster ändras till {int}', function (newCount: number) {
   nav.setItemCount(newCount);
 });
 
-Then('the selected index should be {int}', function (expected: number) {
+Then('ska det valda indexet vara {int}', function (expected: number) {
   assert.strictEqual(nav.getSelectedIndex(), expected,
-    `Expected selected index ${expected}, got ${nav.getSelectedIndex()}`);
+    `Förväntade valt index ${expected}, fick ${nav.getSelectedIndex()}`);
 });
 
-Then('the selected index should not be null', function () {
-  assert(nav.getSelectedIndex() !== null, 'Expected selected index to not be null');
+Then('ska det valda indexet inte vara null', function () {
+  assert(nav.getSelectedIndex() !== null, 'Förväntade att valt index inte är null');
 });
 
-Then('the selected index should be null', function () {
+Then('ska det valda indexet vara null', function () {
   assert(nav.getSelectedIndex() === null,
-    `Expected selected index to be null, got ${nav.getSelectedIndex()}`);
+    `Förväntade att valt index är null, fick ${nav.getSelectedIndex()}`);
 });
 
-Then('the selected index should remain {int}', function (expected: number) {
+Then('ska det valda indexet förbli {int}', function (expected: number) {
   assert.strictEqual(nav.getSelectedIndex(), expected,
-    `Expected selected index to remain ${expected}, got ${nav.getSelectedIndex()}`);
+    `Förväntade att valt index förblir ${expected}, fick ${nav.getSelectedIndex()}`);
 });
 
-Then('no navigation error should occur', function () {
-  assert(true, 'No error occurred');
+Then('ska inget navigeringsfel inträffa', function () {
+  assert(true, 'Inget fel inträffade');
 });

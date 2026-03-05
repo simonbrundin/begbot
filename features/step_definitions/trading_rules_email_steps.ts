@@ -51,15 +51,15 @@ Before(function () {
   noCrash = true;
 });
 
-Given('trading rules with minimum profit {int} SEK and minimum discount {int}%', function (minProfit: number, minDiscount: number) {
+Given('handelsregler med lägsta vinst på {int} SEK och lägsta rabatt på {int}%', function (minProfit: number, minDiscount: number) {
   tradingRules = { minProfitSEK: minProfit, minDiscount: minDiscount };
 });
 
-Given('a listing with price {int} SEK and valuation {int} SEK', function (price: number, valuation: number) {
-  listing = { id: 1, price, valuation, link: 'https://blocket.se/item/123', description: 'Test listing' };
+Given('en annons med priset {int} SEK och värderingen {int} SEK', function (price: number, valuation: number) {
+  listing = { id: 1, price, valuation, link: 'https://blocket.se/item/123', description: 'Testannons' };
 });
 
-Given('a listing with:', function (table: any) {
+Given('en annons med:', function (table: any) {
   listing = { id: 1, price: 0, valuation: 0, link: '', description: '' };
   for (const row of table.rows()) {
     const [field, value] = row;
@@ -72,24 +72,22 @@ Given('a listing with:', function (table: any) {
   }
 });
 
-Given('a new price of {int} SEK', function (price: number) {
+Given('ett nypris på {int} SEK', function (price: number) {
   listing.newPrice = price;
 });
 
-Given('a valid listing that passes trading rules', function () {
+Given('en giltig annons som uppfyller handelsreglerna', function () {
   listing = { id: 1, price: 5000, valuation: 8000, link: 'https://blocket.se/item/123', description: 'Test' };
 });
 
-Given('no email configuration is set', function () {
-  // Simulate no email config
-});
+Given('ingen e-postkonfiguration är inställd', function () {});
 
-When('evaluating the listing against trading rules', function () {
+When('annonsen utvärderas mot handelsreglerna', function () {
   calculatedProfit = listing.valuation - listing.price;
   calculatedDiscount = (calculatedProfit / listing.valuation) * 100;
 });
 
-When('preparing the email notification', function () {
+When('e-postnotifieringen förbereds', function () {
   const profit = listing.valuation - listing.price;
   const discountPercent = (profit / listing.valuation) * 100;
   emailData = {
@@ -105,79 +103,76 @@ When('preparing the email notification', function () {
   };
 });
 
-When('the email notification is triggered', function () {
+When('e-postnotifieringen utlöses', function () {
   emailSentAsync = true;
 });
 
-When('a listing passes trading rules', function () {
+When('en annons uppfyller handelsreglerna', function () {
   noCrash = true;
 });
 
-Then('profit should be {int} SEK', function (expected: number) {
-  assert.strictEqual(calculatedProfit, expected,
-    `Expected profit ${expected}, got ${calculatedProfit}`);
+Then('ska vinsten vara {int} SEK', function (expected: number) {
+  assert.strictEqual(calculatedProfit, expected, `Förväntade vinst ${expected}, fick ${calculatedProfit}`);
 });
 
-Then('discount should be approximately {float}%', function (expected: number) {
+Then('ska rabatten vara ungefär {float}%', function (expected: number) {
   assert(Math.abs(calculatedDiscount - expected) < 1,
-    `Expected discount ~${expected}%, got ${calculatedDiscount.toFixed(2)}%`);
+    `Förväntade rabatt ~${expected}%, fick ${calculatedDiscount.toFixed(2)}%`);
 });
 
-Then('the listing should pass the trading rules', function () {
+Then('annonsen ska uppfylla handelsreglerna', function () {
   assert(passesRules(listing, tradingRules),
-    `Listing should pass trading rules (profit=${calculatedProfit}, discount=${calculatedDiscount.toFixed(2)}%)`);
+    `Annonsen ska uppfylla handelsreglerna (vinst=${calculatedProfit}, rabatt=${calculatedDiscount.toFixed(2)}%)`);
 });
 
-Then('the listing should not pass the minimum profit threshold of {int} SEK', function (threshold: number) {
-  assert(calculatedProfit <= threshold,
-    `Profit ${calculatedProfit} should not exceed threshold ${threshold}`);
+Then('annonsen ska inte uppfylla minimivinstgränsen på {int} SEK', function (threshold: number) {
+  assert(calculatedProfit <= threshold, `Vinst ${calculatedProfit} ska inte överstiga gränsen ${threshold}`);
 });
 
-Then('the listing should not pass the minimum discount threshold of {float}%', function (threshold: number) {
+Then('annonsen ska inte uppfylla minimirabattgränsen på {float}%', function (threshold: number) {
   assert(calculatedDiscount <= threshold,
-    `Discount ${calculatedDiscount.toFixed(2)}% should not exceed threshold ${threshold}%`);
+    `Rabatt ${calculatedDiscount.toFixed(2)}% ska inte överstiga gränsen ${threshold}%`);
 });
 
-Then('the email should include the purchase price', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.purchasePrice > 0, 'Email should include purchase price');
+Then('ska e-posten inkludera köppriset', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.purchasePrice > 0, 'E-posten ska inkludera köppriset');
 });
 
-Then('the email should include the valuation', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.valuation > 0, 'Email should include valuation');
+Then('ska e-posten inkludera värderingen', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.valuation > 0, 'E-posten ska inkludera värderingen');
 });
 
-Then('the email should include the discount percent', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.discountPercent > 0, 'Email should include discount percent');
+Then('ska e-posten inkludera rabattprocenten', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.discountPercent > 0, 'E-posten ska inkludera rabattprocenten');
 });
 
-Then('the email should include the new price', function () {
-  assert(emailData !== null, 'Email data should be set');
-  // New price may be 0 if not set, but field should be present
-  assert('newPrice' in emailData!, 'Email should include new price field');
+Then('ska e-posten inkludera nypriset', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert('newPrice' in emailData!, 'E-posten ska inkludera nypris-fältet');
 });
 
-Then('the email should include the profit', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.profit > 0, 'Email should include profit');
+Then('ska e-posten inkludera vinsten', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.profit > 0, 'E-posten ska inkludera vinsten');
 });
 
-Then('the email should include the description', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.description !== '', 'Email should include description');
+Then('ska e-posten inkludera beskrivningen', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.description !== '', 'E-posten ska inkludera beskrivningen');
 });
 
-Then('the email should include the link', function () {
-  assert(emailData !== null, 'Email data should be set');
-  assert(emailData!.link !== '', 'Email should include link');
+Then('ska e-posten inkludera länken', function () {
+  assert(emailData !== null, 'E-postdata ska finnas');
+  assert(emailData!.link !== '', 'E-posten ska inkludera länken');
 });
 
-Then('the email should be sent asynchronously without blocking', function () {
-  assert(emailSentAsync, 'Email should be sent asynchronously');
+Then('ska e-posten skickas asynkront utan att blockera', function () {
+  assert(emailSentAsync, 'E-posten ska skickas asynkront');
 });
 
-Then('no crash should occur', function () {
-  assert(noCrash, 'No crash should occur');
+Then('ska inget krascha', function () {
+  assert(noCrash, 'Inget ska krascha');
 });

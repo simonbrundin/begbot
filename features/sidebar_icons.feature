@@ -1,75 +1,75 @@
-Feature: Sidebar Icons
-  As a user of the application
-  I want to see icons next to each sidebar menu item
-  So that I can quickly identify different sections
+Feature: Ikoner i sidofältet
+  Som en användare av applikationen
+  Vill jag se ikoner bredvid varje menypost i sidofältet
+  Så att jag snabbt kan identifiera olika sektioner
 
   Background:
-    Given the Nuxt frontend application
+    Given Nuxt-frontendapplikationen
 
-  Scenario: @nuxt/icon module is installed
-    When I check the package.json
-    Then nuxt icon module should be in devDependencies
+  Scenario: Modulen @nuxt/icon är installerad
+    When jag kontrollerar package.json
+    Then Nuxt-ikonmodulen ska finnas i devDependencies
 
-  Scenario: @nuxt/icon is configured in nuxt.config.ts
-    When I check nuxt.config.ts
-    Then nuxt config should include the icon module
+  Scenario: @nuxt/icon är konfigurerat i nuxt.config.ts
+    When jag kontrollerar nuxt.config.ts
+    Then Nuxt-konfigurationen ska inkludera ikonmodulen
 
-  Scenario: Lucide icon collection is installed
-    When I check the package.json
-    Then lucide icon collection should be installed
+  Scenario: Lucide-ikonsamlingen är installerad
+    When jag kontrollerar package.json
+    Then Lucide-ikonsamlingen ska vara installerad
 
-  Scenario: Översikt menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:home icon
+  Scenario: Menyposten Översikt har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:home-ikon
 
-  Scenario: Produkter menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:package icon
+  Scenario: Menyposten Produkter har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:package-ikon
 
-  Scenario: Mina annonser menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:list icon
+  Scenario: Menyposten Mina annonser har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:list-ikon
 
-  Scenario: Transaktioner menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:arrow-left-right icon
+  Scenario: Menyposten Transaktioner har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:arrow-left-right-ikon
 
-  Scenario: Marknadsanalys menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:bar-chart icon
+  Scenario: Menyposten Marknadsanalys har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:bar-chart-ikon
 
-  Scenario: Scraping menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:spider icon
+  Scenario: Menyposten Scraping har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:spider-ikon
 
-  Scenario: Historik menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:history icon
+  Scenario: Menyposten Historik har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:history-ikon
 
-  Scenario: Hittade annonser menu item has an icon
-    When I check the sidebar layout
-    Then it should contain a lucide:megaphone icon
+  Scenario: Menyposten Hittade annonser har en ikon
+    When jag kontrollerar sidofältslayouten
+    Then ska den innehålla en lucide:megaphone-ikon
 
-  Scenario: Icons have consistent size styling
-    When I check the sidebar layout
-    Then all Icon components should have consistent size styling
+  Scenario: Ikoner har konsekvent storleksstil
+    When jag kontrollerar sidofältslayouten
+    Then ska alla ikonkomponenter ha konsekvent storleksstil
 
-  Scenario: Icons have consistent color styling
-    When I check the sidebar layout
-    Then all Icon components should not have explicit color overrides
+  Scenario: Ikoner har konsekvent färgstil
+    When jag kontrollerar sidofältslayouten
+    Then ska inga ikonkomponenter ha explicita färgöverskridningar
 
-  Scenario: Hover styling is preserved
-    When I check the sidebar layout
-    Then the layout should contain "hover:bg-slate-700"
+  Scenario: Hover-stilsättning bevaras
+    When jag kontrollerar sidofältslayouten
+    Then ska layouten innehålla "hover:bg-slate-700"
 
-  Scenario: Active state styling is preserved
-    When I check the sidebar layout
-    Then the layout should contain active-class styling
+  Scenario: Aktivt-tillstånd-stilsättning bevaras
+    When jag kontrollerar sidofältslayouten
+    Then ska layouten innehålla active-class-stilsättning
 
-  Scenario: Icons are inside NuxtLink elements
-    When I check the sidebar layout
-    Then there should be at least 8 NuxtLink elements with icons
+  Scenario: Ikoner finns inuti NuxtLink-element
+    When jag kontrollerar sidofältslayouten
+    Then ska det finnas minst 8 NuxtLink-element med ikoner
 
-  Scenario: Icons use local collection not remote
-    When I check nuxt.config.ts
-    Then it should not use remote server bundle
+  Scenario: Ikoner använder lokal samling och inte fjärrserver
+    When jag kontrollerar nuxt.config.ts
+    Then ska konfigurationen inte använda fjärr-server-bundle

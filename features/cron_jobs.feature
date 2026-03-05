@@ -1,78 +1,78 @@
-Feature: Cron Jobs Service
-  As a bot user
-  I want to manage scheduled scraper jobs
-  So that I can automate when the scraper runs
+Feature: Schemalagda jobb
+  Som en botanvändare
+  Vill jag hantera schemalagda skrapningsjobb
+  Så att jag kan automatisera när skraparen körs
 
   Background:
-    Given a cron job service with mock database
+    Given en schemalagd-jobb-tjänst med mockdatabas
 
-  Scenario: Create a new cron job successfully
-    When I create a cron job with name "Daily iPhone scan", expression "0 8 * * *", search term IDs "[1, 2]", and active true
-    Then the cron job should be saved successfully
-    And the cron job should have ID set
-    And the cron job name should be "Daily iPhone scan"
-    And the cron job expression should be "0 8 * * *"
-    And the cron job should be active
+  Scenario: Skapa ett nytt schemalagt jobb
+    When jag skapar ett schemalagt jobb med namn "Daily iPhone scan", uttryck "0 8 * * *", sökterms-ID:n "[1, 2]", och aktivt true
+    Then det schemalagda jobbet ska sparas
+    And det schemalagda jobbet ska ha ett ID
+    And jobbnamnet ska vara "Daily iPhone scan"
+    And jobbuttrycket ska vara "0 8 * * *"
+    And jobbet ska vara aktivt
 
-  Scenario: Get all cron jobs
-    Given the database has cron job records
+  Scenario: Hämta alla schemalagda jobb
+    Given databasen har schemalagda jobbposter
       | id | name               | cron_expression | search_term_ids | is_active |
       | 1  | Daily iPhone scan  | 0 8 * * *       | [1,2]           | true      |
       | 2  | Hourly check        | 0 * * * *       | []              | false     |
-    When I get all cron jobs
-    Then I should receive 2 cron job records
-    And the first cron job should have name "Daily iPhone scan"
+    When jag hämtar alla schemalagda jobb
+    Then ska jag få 2 schemalagda jobbposter
+    And det första schemalagda jobbet ska ha namn "Daily iPhone scan"
 
-  Scenario: Update a cron job
-    Given the database has cron job records
+  Scenario: Uppdatera ett schemalagt jobb
+    Given databasen har schemalagda jobbposter
       | id | name             | cron_expression | search_term_ids | is_active |
       | 1  | Daily scan       | 0 8 * * *       | [1]             | true      |
-    When I update cron job 1 to name "Twice daily scan", expression "0 8,20 * * *", search term IDs "[1, 2]", and active false
-    Then the cron job should be updated successfully
-    And the cron job name should be "Twice daily scan"
-    And the cron job expression should be "0 8,20 * * *"
-    And the cron job should be inactive
+    When jag uppdaterar schemalagt jobb 1 till namn "Twice daily scan", uttryck "0 8,20 * * *", sökterms-ID:n "[1, 2]", och aktivt false
+    Then det schemalagda jobbet ska uppdateras
+    And jobbnamnet ska vara "Twice daily scan"
+    And jobbuttrycket ska vara "0 8,20 * * *"
+    And jobbet ska vara inaktivt
 
-  Scenario: Delete a cron job
-    Given the database has cron job records
+  Scenario: Ta bort ett schemalagt jobb
+    Given databasen har schemalagda jobbposter
       | id | name             | cron_expression | search_term_ids | is_active |
       | 1  | Old job          | 0 8 * * *       | [1]             | true      |
-    When I delete cron job 1
-    Then the cron job should be deleted successfully
-    And there should be 0 cron jobs in the database
+    When jag tar bort schemalagt jobb 1
+    Then det schemalagda jobbet ska tas bort
+    And det ska finnas 0 schemalagda jobb i databasen
 
-  Scenario: Toggle cron job active status
-    Given the database has cron job records
+  Scenario: Växla aktivt tillstånd för ett schemalagt jobb
+    Given databasen har schemalagda jobbposter
       | id | name             | cron_expression | search_term_ids | is_active |
       | 1  | Test job         | 0 * * * *       | []              | true      |
-    When I toggle cron job 1 active status
-    Then the cron job should be updated successfully
-    And the cron job should be inactive
+    When jag växlar aktivt tillstånd för schemalagt jobb 1
+    Then det schemalagda jobbet ska uppdateras
+    And jobbet ska vara inaktivt
 
-  Scenario: Create cron job with empty search term IDs (all terms)
-    When I create a cron job with name "All terms scan", expression "0 6 * * *", search term IDs "[]", and active true
-    Then the cron job should be saved successfully
-    And the cron job should have empty search term IDs
+  Scenario: Skapa schemalagt jobb med tomma sökterms-ID:n (alla termer)
+    When jag skapar ett schemalagt jobb med namn "All terms scan", uttryck "0 6 * * *", sökterms-ID:n "[]", och aktivt true
+    Then det schemalagda jobbet ska sparas
+    And sökterms-ID:na ska vara tomma
 
-  Scenario: Invalid cron expression
-    Given the database has cron job records
+  Scenario: Ogiltigt cron-uttryck
+    Given databasen har schemalagda jobbposter
       | id | name             | cron_expression | search_term_ids | is_active |
       | 1  | Test job         | 0 8 * * *       | []              | true      |
-    When I update cron job 1 to name "Bad job", expression "invalid", search term IDs "[]", and active true
-    Then an error should be returned
-    And the error message should contain "invalid cron expression"
+    When jag uppdaterar schemalagt jobb 1 till namn "Bad job", uttryck "invalid", sökterms-ID:n "[]", och aktivt true
+    Then ett fel ska returneras
+    And felmeddelandet ska innehålla "invalid cron expression"
 
-  Scenario: Get cron job by ID
-    Given the database has cron job records
+  Scenario: Hämta schemalagt jobb via ID
+    Given databasen har schemalagda jobbposter
       | id | name             | cron_expression | search_term_ids | is_active |
       | 1  | Specific job     | 0 8 * * *       | [1,2,3]         | true      |
       | 2  | Other job        | 0 * * * *       | []              | false     |
-    When I get cron job by ID 1
-    Then I should receive 1 cron job record
-    And the cron job name should be "Specific job"
-    And the cron job expression should be "0 8 * * *"
+    When jag hämtar schemalagt jobb med ID 1
+    Then ska jag få 1 schemalagd jobbpost
+    And jobbnamnet ska vara "Specific job"
+    And jobbuttrycket ska vara "0 8 * * *"
 
-  Scenario: Cron expression with special characters
-    When I create a cron job with name "Weekday scan", expression "0 9 * * 1-5", search term IDs "[1]", and active true
-    Then the cron job should be saved successfully
-    And the cron job expression should be "0 9 * * 1-5"
+  Scenario: Cron-uttryck med specialtecken
+    When jag skapar ett schemalagt jobb med namn "Weekday scan", uttryck "0 9 * * 1-5", sökterms-ID:n "[1]", och aktivt true
+    Then det schemalagda jobbet ska sparas
+    And jobbuttrycket ska vara "0 9 * * 1-5"

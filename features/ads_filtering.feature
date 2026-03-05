@@ -1,62 +1,62 @@
-Feature: Ads Page Filtering
-  As a user viewing the ads page
-  I want to filter listings by tab selection
-  So that I can quickly find good value deals
+Feature: Annonsfiltrering
+  Som en användare som tittar på annonssidan
+  Vill jag filtrera annonser via flikval
+  Så att jag snabbt kan hitta prisvärda erbjudanden
 
   Background:
-    Given I have a listing filter service
+    Given jag har en annonsfiltreringstjänst
 
-  Scenario: Filter shows all listings in "Alla" tab
-    Given the following listings:
+  Scenario: Filtret visar alla annonser i fliken "Alla"
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 1000  | 800       |
       | 2          | 500   | 1000      |
       | 3          | 2000  | 2500      |
-    When I filter by "all" tab
-    Then I should receive 3 listings
+    When jag filtrerar på fliken "all"
+    Then ska jag få 3 annonser
 
-  Scenario: Filter shows only good value listings in "Prisvärda" tab
-    Given the following listings:
+  Scenario: Filtret visar bara prisvärda annonser i fliken "Prisvärda"
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 1000  | 800       |
       | 2          | 500   | 1000      |
       | 3          | 2000  | 2500      |
-    When I filter by "good-value" tab
-    Then I should receive 2 listings
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 2 annonser
 
-  Scenario: No good value listings when price equals valuation
-    Given the following listings:
+  Scenario: Inga prisvärda annonser när priset är lika med värderingen
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 1000  | 1000      |
-    When I filter by "good-value" tab
-    Then I should receive 0 listings
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 0 annonser
 
-  Scenario: No good value listings when price exceeds valuation
-    Given the following listings:
+  Scenario: Inga prisvärda annonser när priset överstiger värderingen
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 1500  | 1000      |
-    When I filter by "good-value" tab
-    Then I should receive 0 listings
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 0 annonser
 
-  Scenario: Listing without valuation is not included in good value
-    Given the following listings:
+  Scenario: Annons utan värdering inkluderas inte som prisvärd
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 500   |           |
-    When I filter by "good-value" tab
-    Then I should receive 0 listings
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 0 annonser
 
-  Scenario: All listings are good value
-    Given the following listings:
+  Scenario: Alla annonser är prisvärda
+    Given följande annonser:
       | listing_id | price | valuation |
       | 1          | 500   | 1000      |
       | 2          | 800   | 1500      |
       | 3          | 1000  | 2000      |
-    When I filter by "good-value" tab
-    Then I should receive 3 listings
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 3 annonser
 
-  Scenario: Empty listings array
-    Given there are no listings
-    When I filter by "all" tab
-    Then I should receive 0 listings
-    When I filter by "good-value" tab
-    Then I should receive 0 listings
+  Scenario: Tom annonslista
+    Given det finns inga annonser
+    When jag filtrerar på fliken "all"
+    Then ska jag få 0 annonser
+    When jag filtrerar på fliken "good-value"
+    Then ska jag få 0 annonser

@@ -1,53 +1,53 @@
-Feature: Trading Rules Email Notification
-  As a trading system
-  I want to send email notifications when listings pass trading rules
-  So that I can act on profitable opportunities
+Feature: E-postnotifiering för handelsregler
+  Som ett handelssystem
+  Vill jag skicka e-postnotifieringar när annonser uppfyller handelsreglerna
+  Så att jag kan agera på lönsamma möjligheter
 
   Background:
-    Given trading rules with minimum profit 500 SEK and minimum discount 10%
+    Given handelsregler med lägsta vinst på 500 SEK och lägsta rabatt på 10%
 
-  Scenario: Email is sent when listing passes all trading rules
-    Given a listing with price 6000 SEK and valuation 8000 SEK
-    When evaluating the listing against trading rules
-    Then profit should be 2000 SEK
-    And discount should be approximately 25%
-    And the listing should pass the trading rules
+  Scenario: E-post skickas när annonsen uppfyller alla handelsregler
+    Given en annons med priset 6000 SEK och värderingen 8000 SEK
+    When annonsen utvärderas mot handelsreglerna
+    Then ska vinsten vara 2000 SEK
+    And ska rabatten vara ungefär 25%
+    And annonsen ska uppfylla handelsreglerna
 
-  Scenario: Email contains all required fields
-    Given a listing with:
+  Scenario: E-posten innehåller alla obligatoriska fält
+    Given en annons med:
       | field       | value                          |
       | price       | 5000                           |
       | valuation   | 8000                           |
       | link        | https://blocket.se/item/123    |
       | description | Säljer iPhone 15 Pro i fint skick |
-    And a new price of 15000 SEK
-    When preparing the email notification
-    Then the email should include the purchase price
-    And the email should include the valuation
-    And the email should include the discount percent
-    And the email should include the new price
-    And the email should include the profit
-    And the email should include the description
-    And the email should include the link
+    And ett nypris på 15000 SEK
+    When e-postnotifieringen förbereds
+    Then ska e-posten inkludera köppriset
+    And ska e-posten inkludera värderingen
+    And ska e-posten inkludera rabattprocenten
+    And ska e-posten inkludera nypriset
+    And ska e-posten inkludera vinsten
+    And ska e-posten inkludera beskrivningen
+    And ska e-posten inkludera länken
 
-  Scenario: No email when profit is too low
-    Given a listing with price 7500 SEK and valuation 8000 SEK
-    When evaluating the listing against trading rules
-    Then profit should be 500 SEK
-    And the listing should not pass the minimum profit threshold of 500 SEK
+  Scenario: Ingen e-post när vinsten är för låg
+    Given en annons med priset 7500 SEK och värderingen 8000 SEK
+    When annonsen utvärderas mot handelsreglerna
+    Then ska vinsten vara 500 SEK
+    And annonsen ska inte uppfylla minimivinstgränsen på 500 SEK
 
-  Scenario: No email when discount is too low
-    Given a listing with price 7300 SEK and valuation 8000 SEK
-    When evaluating the listing against trading rules
-    Then discount should be approximately 8.75%
-    And the listing should not pass the minimum discount threshold of 10%
+  Scenario: Ingen e-post när rabatten är för låg
+    Given en annons med priset 7300 SEK och värderingen 8000 SEK
+    When annonsen utvärderas mot handelsreglerna
+    Then ska rabatten vara ungefär 8.75%
+    And annonsen ska inte uppfylla minimirabattgränsen på 10%
 
-  Scenario: Email is sent asynchronously
-    Given a valid listing that passes trading rules
-    When the email notification is triggered
-    Then the email should be sent asynchronously without blocking
+  Scenario: E-post skickas asynkront
+    Given en giltig annons som uppfyller handelsreglerna
+    When e-postnotifieringen utlöses
+    Then ska e-posten skickas asynkront utan att blockera
 
-  Scenario: Handle missing email configuration
-    Given no email configuration is set
-    When a listing passes trading rules
-    Then no crash should occur
+  Scenario: Hantera saknad e-postkonfiguration
+    Given ingen e-postkonfiguration är inställd
+    When en annons uppfyller handelsreglerna
+    Then ska inget krascha

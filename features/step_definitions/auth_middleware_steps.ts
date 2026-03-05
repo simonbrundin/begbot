@@ -1,7 +1,6 @@
 import { Given, When, Then, Before } from '@cucumber/cucumber';
 import assert from 'assert';
 
-// Simulate auth middleware behavior
 interface MockRequest {
   authHeader?: string;
 }
@@ -33,28 +32,27 @@ Before(function () {
   response = { statusCode: 0 };
 });
 
-Given('an auth middleware protecting an endpoint', function () {
-  // Reset state
+Given('en autentiseringsmiddleware som skyddar en endpoint', function () {
   request = {};
   response = { statusCode: 0 };
 });
 
-When('a request is made without an Authorization header', function () {
+When('en förfrågan görs utan Authorization-header', function () {
   request = {};
   response = processRequest(request);
 });
 
-When('a request is made with an invalid Bearer token', function () {
+When('en förfrågan görs med en ogiltig Bearer-token', function () {
   request = { authHeader: 'Bearer invalid-token' };
   response = processRequest(request);
 });
 
-When('a request is made with Authorization header {string} without Bearer prefix', function (authValue: string) {
+When('en förfrågan görs med Authorization-headern {string} utan Bearer-prefix', function (authValue: string) {
   request = { authHeader: authValue };
   response = processRequest(request);
 });
 
-Then('the response status should be {int} Unauthorized', function (statusCode: number) {
+Then('ska svarsstatusen vara {int} Obehörig', function (statusCode: number) {
   assert.strictEqual(response.statusCode, statusCode,
-    `Expected status ${statusCode}, got ${response.statusCode}`);
+    `Förväntade status ${statusCode}, fick ${response.statusCode}`);
 });
