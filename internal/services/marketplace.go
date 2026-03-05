@@ -6,6 +6,7 @@ import (
 	"begbot/internal/models"
 	"begbot/internal/proxy"
 	"begbot/internal/scraper"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -44,6 +45,7 @@ type EvomiFetcher interface {
 // TraderaFetcher abstracts Tradera API client used to fetch ads.
 type TraderaFetcher interface {
 	FetchAds(ctx context.Context, query string) ([]marketplaces.RawAd, error)
+	FetchAdDetails(ctx context.Context, adURL string) (*marketplaces.AdDetails, error)
 }
 
 func NewMarketplaceService(cfg *config.Config) *MarketplaceService {
@@ -94,6 +96,10 @@ type RawAd struct {
 	Marketplace       string
 	ShippingCost      *float64 // NULL if unknown, 0 if free, positive value if specified
 	ShippingInsurance *float64 // NULL if unknown, positive value if specified (e.g., köpskydd)
+	// Tradera-specific fields
+	HasBuyNow    bool
+	BuyNowPrice  float64
+	CurrentPrice float64
 }
 
 // FetchAdDetails fetches detailed information from an individual ad page
@@ -331,11 +337,13 @@ func (s *MarketplaceService) fetchTraderaAdsDirect(ctx context.Context, searchUR
 
 func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 	type ItemData struct {
-		Link   string
-		Title  string
-		Price  float64
-		Image  string
-		ItemID string
+		Link         string
+		Title        string
+		Price        float64
+		Image        string
+		ItemID       string
+		BuyNowPrice  float64
+		CurrentPrice float64
 	}
 
 	items := make(map[string]ItemData)
@@ -387,10 +395,12 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 		})
 
 		items[link] = ItemData{
-			Link:   link,
-			Title:  title,
-			Image:  imageURL,
-			ItemID: itemID,
+			Link:         link,
+			Title:        title,
+			Image:        imageURL,
+			ItemID:       itemID,
+			BuyNowPrice:  0,
+			CurrentPrice: 0,
 		}
 	})
 
@@ -407,23 +417,69 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 		}
 
 		itemID := strings.TrimSuffix(priceID, "-price")
+		// Some price ids include a mid "-bin-" segment (eg. "item-100-bin-price").
+		// Normalize by removing a trailing "-bin" if present so it matches the item's aria-derived id.
+		itemID = strings.TrimSuffix(itemID, "-bin")
 
+		// Determine whether this selector represents a buy-now price (bin) or a regular/current price
+		dataTest := strings.ToLower(sel.AttrOr("data-testid", ""))
+		isBin := strings.Contains(priceID, "bin") || strings.Contains(dataTest, "bin") || strings.Contains(strings.ToLower(priceText), "köp nu")
+
+		matched := false
 		for link, item := range items {
 			if item.ItemID == itemID {
-				item.Price = price
+				if isBin {
+					item.BuyNowPrice = price
+				} else {
+					item.CurrentPrice = price
+				}
 				items[link] = item
+				matched = true
 				break
+			}
+		}
+		if !matched {
+			// Fallback: try matching by numeric id contained in the id strings (handles
+			// mismatches like "item-card-201-price" vs "item-201-bin-price")
+			re := regexp.MustCompile(`(\d+)`)
+			m := re.FindStringSubmatch(itemID)
+			if len(m) > 1 {
+				num := m[1]
+				for link, item := range items {
+					if strings.Contains(item.ItemID, num) || strings.Contains(link, "/item/"+num) {
+						if isBin {
+							item.BuyNowPrice = price
+						} else {
+							item.CurrentPrice = price
+						}
+						items[link] = item
+						break
+					}
+				}
 			}
 		}
 	})
 
 	var ads []RawAd
 	for _, item := range items {
+		// Prefer buy-now price when available
+		chosenPrice := item.CurrentPrice
+		hasBuyNow := false
+		buyNowPrice := 0.0
+		if item.BuyNowPrice > 0 {
+			chosenPrice = item.BuyNowPrice
+			hasBuyNow = true
+			buyNowPrice = item.BuyNowPrice
+		}
+
 		ad := RawAd{
-			Link:        item.Link,
-			Title:       item.Title,
-			Price:       item.Price,
-			Marketplace: "tradera",
+			Link:         item.Link,
+			Title:        item.Title,
+			Price:        chosenPrice,
+			Marketplace:  "tradera",
+			HasBuyNow:    hasBuyNow,
+			BuyNowPrice:  buyNowPrice,
+			CurrentPrice: item.CurrentPrice,
 		}
 		if item.Image != "" {
 			ad.ImageURLs = []string{item.Image}
@@ -447,6 +503,9 @@ func convertMarketplacesRawAds(ads []marketplaces.RawAd) []RawAd {
 			Marketplace:       ad.Marketplace,
 			ShippingCost:      ad.ShippingCost,
 			ShippingInsurance: ad.ShippingInsurance,
+			HasBuyNow:         ad.HasBuyNow,
+			BuyNowPrice:       ad.BuyNowPrice,
+			CurrentPrice:      ad.CurrentPrice,
 		}
 	}
 	return result
@@ -546,11 +605,48 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 			title = strings.TrimSpace(titleAttr)
 		}
 
-		priceText := strings.TrimSpace(sel.Find(".item-card_priceDetails__TzN1U").Text())
-		if priceText == "" {
-			priceText = strings.TrimSpace(sel.Find("[class*='price']").First().Text())
+		// Detect both current price and buy-now (Köp nu) price when available
+		var currentPrice float64
+		var buyNowPrice float64
+
+		// Look for likely buy-now selectors first
+		sel.Find("[data-testid='bin-price'], [data-testid='binprice'], [data-testid='buy-now'], .bin-price").Each(func(_ int, pSel *goquery.Selection) {
+			text := strings.TrimSpace(pSel.Text())
+			if text == "" {
+				return
+			}
+			if v := parsePrice(text); v > 0 {
+				buyNowPrice = v
+			}
+		})
+
+		// Fallback: parse any price-like text in the price details area
+		sel.Find(".item-card_priceDetails__TzN1U, [data-testid='price'], [class*='price']").Each(func(_ int, pSel *goquery.Selection) {
+			text := strings.TrimSpace(pSel.Text())
+			if text == "" {
+				return
+			}
+			v := parsePrice(text)
+			if v == 0 {
+				return
+			}
+			// Heuristic: if text contains "köp" it's likely a buy-now price
+			lower := strings.ToLower(text)
+			dataTest := strings.ToLower(pSel.AttrOr("data-testid", ""))
+			idAttr := strings.ToLower(pSel.AttrOr("id", ""))
+			isBin := strings.Contains(lower, "köp nu") || strings.Contains(lower, "köp") || strings.Contains(dataTest, "bin") || strings.Contains(idAttr, "bin")
+			if isBin {
+				buyNowPrice = v
+			} else {
+				currentPrice = v
+			}
+		})
+
+		// Choose final price preferring buy-now when present
+		price := currentPrice
+		if buyNowPrice > 0 {
+			price = buyNowPrice
 		}
-		price := parsePrice(priceText)
 
 		var imageURLs []string
 		sel.Find("img").Each(func(_ int, imgSel *goquery.Selection) {
@@ -564,11 +660,14 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 		})
 
 		ad := RawAd{
-			Link:        link,
-			Title:       title,
-			Price:       price,
-			Marketplace: "tradera",
-			ImageURLs:   imageURLs,
+			Link:         link,
+			Title:        title,
+			Price:        price,
+			Marketplace:  "tradera",
+			ImageURLs:    imageURLs,
+			HasBuyNow:    buyNowPrice > 0,
+			BuyNowPrice:  buyNowPrice,
+			CurrentPrice: currentPrice,
 		}
 
 		ads = append(ads, ad)
@@ -1166,4 +1265,116 @@ func (s *MarketplaceService) waitForRateLimit(ctx context.Context) error {
 	}
 	s.lastReqTime = time.Now()
 	return nil
+}
+
+func (s *MarketplaceService) fetchTraderaAdPageDirect(ctx context.Context, adURL string) ([]byte, error) {
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", adURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create direct request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("direct fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read direct response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, fmt.Errorf("direct fetch blocked with status %d", resp.StatusCode)
+	}
+
+	lowerBody := strings.ToLower(string(body))
+	antiBotMarkers := []string{"captcha", "recaptcha", "cloudflare", "please enable javascript", "rate limited", "rate limit"}
+	for _, m := range antiBotMarkers {
+		if strings.Contains(lowerBody, m) {
+			return nil, fmt.Errorf("direct fetch response contains anti-bot marker %q", m)
+		}
+	}
+
+	return body, nil
+}
+
+type TraderaAdPageDetails struct {
+	BuyNowPrice  float64
+	CurrentPrice float64
+	Title        string
+	ImageURLs    []string
+}
+
+func ParseTraderaAdPage(body []byte) (*TraderaAdPageDetails, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	details := &TraderaAdPageDetails{}
+
+	title := doc.Find("h1").First().Text()
+	if title == "" {
+		title = doc.Find("[data-testid='item-title']").First().Text()
+	}
+	details.Title = strings.TrimSpace(title)
+
+	doc.Find("img").Each(func(i int, sel *goquery.Selection) {
+		if src, ok := sel.Attr("src"); ok && src != "" && !strings.Contains(src, "data:") && !strings.Contains(src, "logo") && !strings.Contains(src, "icon") {
+			if strings.HasPrefix(src, "//") {
+				src = "https:" + src
+			}
+			details.ImageURLs = append(details.ImageURLs, src)
+		}
+	})
+
+	doc.Find("[data-testid='bin-price'], [class*='bin'], [class*='BuyNow'], [data-testid='price']").Each(func(i int, sel *goquery.Selection) {
+		priceText := strings.TrimSpace(sel.Text())
+		price := parsePrice(priceText)
+		if price > 0 {
+			if strings.Contains(priceText, "köp nu") || strings.Contains(strings.ToLower(sel.AttrOr("data-testid", "")), "bin") || strings.Contains(strings.ToLower(sel.AttrOr("class", "")), "bin") {
+				details.BuyNowPrice = price
+			} else if details.CurrentPrice == 0 {
+				details.CurrentPrice = price
+			}
+		}
+	})
+
+	doc.Find("span, div").Each(func(i int, sel *goquery.Selection) {
+		text := strings.TrimSpace(sel.Text())
+		lowerText := strings.ToLower(text)
+		if (strings.Contains(lowerText, "köp nu") || strings.Contains(lowerText, "buy now")) && details.BuyNowPrice == 0 {
+			re := regexp.MustCompile(`(\d[\d\s]*)\s*(?:kr|SEK|kronor)?`)
+			m := re.FindStringSubmatch(text)
+			if len(m) > 1 {
+				price := parsePrice(m[1])
+				if price > 0 {
+					details.BuyNowPrice = price
+				}
+			}
+		}
+	})
+
+	if details.CurrentPrice == 0 && details.BuyNowPrice > 0 {
+		details.CurrentPrice = details.BuyNowPrice
+	}
+
+	return details, nil
+}
+
+func (s *MarketplaceService) FetchTraderaAdPageFallback(ctx context.Context, adURL string) (*TraderaAdPageDetails, error) {
+	body, err := s.fetchTraderaAdPageDirect(ctx, adURL)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTraderaAdPage(body)
 }

@@ -32,6 +32,15 @@ func (m *mockTraderaClient) FetchAds(ctx context.Context, query string) ([]marke
 	return m.ads, m.err
 }
 
+func (m *mockTraderaClient) FetchAdDetails(ctx context.Context, adURL string) (*marketplaces.AdDetails, error) {
+	m.calls++
+	if m.err != nil {
+		return nil, m.err
+	}
+	// No details by default for the mock
+	return nil, nil
+}
+
 func TestFetchTraderaFallback_DirectBlocked_EvomiSucceeds(t *testing.T) {
 	s := &MarketplaceService{}
 

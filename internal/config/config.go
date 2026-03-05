@@ -56,6 +56,19 @@ type TraderaConfig struct {
 	BaseURL string        `yaml:"base_url"`
 	AppID   string        `yaml:"app_id"`
 	AppKey  string        `yaml:"app_key"`
+	// EnrichLimit controls how many GetItem enrichment calls are made per
+	// FetchAds invocation. Keep small to avoid hitting API quotas.
+	EnrichLimit int `yaml:"enrich_limit"`
+	// EnrichCacheTTL controls how long GetItem responses are cached locally.
+	EnrichCacheTTL time.Duration `yaml:"enrich_cache_ttl"`
+	// SaveOnlyBuyNow: when true, only save Tradera ads that have a confirmed buy-now price
+	SaveOnlyBuyNow bool `yaml:"save_only_buy_now"`
+	// EnrichTimeoutSeconds: timeout for per-ad enrichment attempts (seconds)
+	EnrichTimeoutSeconds int `yaml:"enrich_timeout_seconds"`
+	// EnrichMaxRetries: max retry attempts for API enrichment (default 3)
+	EnrichMaxRetries int `yaml:"enrich_max_retries"`
+	// EnrichBackoffSeconds: base backoff time in seconds between retries (default 2)
+	EnrichBackoffSeconds int `yaml:"enrich_backoff_seconds"`
 }
 
 type BlocketConfig struct {
@@ -108,6 +121,22 @@ func Load(path string) (*Config, error) {
 func applyDefaults(cfg *Config) {
 	if cfg.Scraping.Tradera.Timeout == 0 {
 		cfg.Scraping.Tradera.Timeout = 30 * time.Second
+	}
+	if cfg.Scraping.Tradera.EnrichLimit == 0 {
+		cfg.Scraping.Tradera.EnrichLimit = 10
+	}
+	if cfg.Scraping.Tradera.EnrichCacheTTL == 0 {
+		cfg.Scraping.Tradera.EnrichCacheTTL = 24 * time.Hour
+	}
+	// Default: enforce save-only-buy-now and short enrichment timeout
+	if cfg.Scraping.Tradera.EnrichTimeoutSeconds == 0 {
+		cfg.Scraping.Tradera.EnrichTimeoutSeconds = 5
+	}
+	// default SaveOnlyBuyNow is true to opt into the new stricter behavior
+	// unless explicitly disabled in config
+	// Note: projects upgrading can set this to false to preserve old behavior
+	if !cfg.Scraping.Tradera.SaveOnlyBuyNow {
+		cfg.Scraping.Tradera.SaveOnlyBuyNow = true
 	}
 	if cfg.Scraping.Blocket.Timeout == 0 {
 		cfg.Scraping.Blocket.Timeout = 30 * time.Second
@@ -171,6 +200,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("TRADERA_APP_KEY"); v != "" {
 		cfg.Scraping.Tradera.AppKey = v
+	}
+	if v := os.Getenv("TRADERA_ENRICH_LIMIT"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			cfg.Scraping.Tradera.EnrichLimit = n
+		}
 	}
 	if v := os.Getenv("PROXY_PROVIDER"); v != "" {
 		cfg.Scraping.Proxy.Provider = v

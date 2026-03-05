@@ -2,16 +2,19 @@
 
 ## Frontend
 
-N/A (inget frontend behövs till en början)
+Nuxt (Vue 3) med Tailwind CSS
 
 ## Backend
 
-Go
+Go (befintlig Go API)
 
 ## Database
 
-Postgres
+PostgreSQL
 
 ## Other
 
-(to be defined)
+- Redis för caching
+- Docker för containerisering
+- GitHub Actions för CI/CD
+- Möjliga externa tjänster: Supabase, Sentry, e-postleverantör
