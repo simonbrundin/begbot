@@ -1267,6 +1267,22 @@ func (s *MarketplaceService) waitForRateLimit(ctx context.Context) error {
 	return nil
 }
 
+// ExtractBlocketAdID extracts the numeric ad ID from a Blocket URL.
+// Returns 0 if the URL does not contain a recognised ad ID path segment.
+func ExtractBlocketAdID(link string) int64 {
+	return extractBlocketAdID(link)
+}
+
+// WaitForRateLimit enforces the per-request rate limit for Blocket requests.
+func (s *MarketplaceService) WaitForRateLimit(ctx context.Context) error {
+	return s.waitForRateLimit(ctx)
+}
+
+// FetchBlocketAdFromAPI fetches ad details from the Blocket API for the given ad ID.
+func (s *MarketplaceService) FetchBlocketAdFromAPI(ctx context.Context, adID int64) (*BlocketAdDetails, error) {
+	return s.fetchBlocketAdFromAPI(ctx, adID)
+}
+
 func (s *MarketplaceService) fetchTraderaAdPageDirect(ctx context.Context, adURL string) ([]byte, error) {
 	client := &http.Client{
 		Timeout:   30 * time.Second,

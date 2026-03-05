@@ -2,7 +2,6 @@ Feature: Marketplace
 
   Background:
     Given a marketplace service is available
-    And the configuration has blocket enabled
 
   Scenario: Extract valid Blocket ad ID from URL
     Given the URL "https://www.blocket.se/annons/123456"
@@ -51,4 +50,4 @@ Feature: Marketplace
     Given the API returns a rate limit error
     When retrying the request
     Then the request should eventually succeed
-    Or return a rate limit exceeded error
+    And no rate limit errors should occur
