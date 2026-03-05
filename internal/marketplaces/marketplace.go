@@ -15,6 +15,10 @@ type RawAd struct {
 	Marketplace       string
 	ShippingCost      *float64
 	ShippingInsurance *float64
+	// Optional fields used by some marketplace providers (Tradera)
+	HasBuyNow    bool
+	BuyNowPrice  float64
+	CurrentPrice float64
 }
 
 type AdDetails struct {
@@ -27,6 +31,8 @@ type AdDetails struct {
 	ShippingCost      *float64
 	ShippingInsurance *float64
 	ItemCondition     string
+	// Tradera-specific
+	BuyNowPrice float64
 }
 
 type MarketplaceFetcher interface {

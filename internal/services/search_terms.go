@@ -17,6 +17,12 @@ func NewSearchTermService(db *db.Postgres) *SearchTermService {
 	return &SearchTermService{db: db}
 }
 
+// SearchTermCreator defines the minimal interface used by handlers so tests
+// can inject fakes. It's implemented by SearchTermService.
+type SearchTermCreator interface {
+	CreateSearchTerm(ctx context.Context, description, url string, marketplaceID *int64) (*models.SearchTerm, error)
+}
+
 // CreateSearchTerm creates a new search term. `marketplaceID` may be nil when
 // the caller doesn't specify a marketplace. When present and pointing to the
 // Tradera marketplace (id == 2) plain queries (not URL-like) are normalized

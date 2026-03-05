@@ -2,12 +2,12 @@
 
 ## Problem
 
-Svårt att hitta lönsamma produkter för omförsäljning
+Hämtar annonser från många olika annonsplatser och värderar annonserna och rekommenderar att köpa produkter som är köpvärda enligt användarens parametrar.
 
 ## Target Users
 
-Mig själv
+Market analysts, återförsäljare och personer som köper in produkter för vidareförsäljning eller analys.
 
 ## Solution
 
-Den hittar precis de produkter jag tror jag kan tjäna pengar på att köpa och sälja vidare
+Automatisk insamling av annonser, strukturerad värdering och notifieringar/rekommendationer när köpvärda annonser hittas.

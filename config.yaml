@@ -35,4 +35,4 @@ email:
   from: "" # Set via SMTP_FROM env var
   recipients:
     - "simonbrundin@gmail.com"
-    - "freddie_tour@hotmail.com"
+    # - "freddie_tour@hotmail.com"

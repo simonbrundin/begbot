@@ -44,6 +44,9 @@ type Server struct {
 	scheduler            *services.Scheduler
 	messagingService     *services.MessagingService
 	valuationService     *services.ValuationService
+	// Injectable service used by handlers to create/search search terms.
+	// Using the interface from services package allows tests to inject a fake.
+	searchTermSvc services.SearchTermCreator
 }
 
 func main() {
@@ -84,6 +87,7 @@ func main() {
 		scheduler:            scheduler,
 		messagingService:     messagingService,
 		valuationService:     valuationService,
+		searchTermSvc:        services.NewSearchTermService(database),
 	}
 
 	// Initialize auth middleware
@@ -1379,8 +1383,13 @@ func (s *Server) searchTermsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Use SearchTermService to ensure normalization is applied.
-		searchTermSvc := services.NewSearchTermService(s.db)
+		// Use injected SearchTermCreator if present (allows tests to inject fakes).
+		var searchTermSvc services.SearchTermCreator
+		if s.searchTermSvc != nil {
+			searchTermSvc = s.searchTermSvc
+		} else {
+			searchTermSvc = services.NewSearchTermService(s.db)
+		}
 		created, err := searchTermSvc.CreateSearchTerm(r.Context(), input.Description, input.URL, input.MarketplaceID)
 		if err != nil {
 			api.WriteServerError(w, err.Error())
