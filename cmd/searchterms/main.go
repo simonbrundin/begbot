@@ -80,7 +80,13 @@ func addSearchTerm(ctx context.Context, svc *services.SearchTermService, descrip
 		os.Exit(1)
 	}
 
-	term, err := svc.CreateSearchTerm(ctx, description, url, marketplaceID)
+	// Pass marketplaceID as a pointer to preserve nilability and to match
+	// the updated CreateSearchTerm signature.
+	var mp *int64
+	if marketplaceID != 0 {
+		mp = &marketplaceID
+	}
+	term, err := svc.CreateSearchTerm(ctx, description, url, mp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create search term: %v\n", err)
 		os.Exit(1)

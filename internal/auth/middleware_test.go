@@ -8,7 +8,8 @@ import (
 
 // Test that unauthorized requests are rejected
 func TestAuthMiddleware_Unauthorized(t *testing.T) {
-	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co")
+	// NewAuthMiddleware signature now accepts (supabaseURL, supabaseAnonKey).
+	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co", "")
 
 	handler := authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -27,7 +28,7 @@ func TestAuthMiddleware_Unauthorized(t *testing.T) {
 
 // Test that requests with invalid Bearer token are rejected
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co")
+	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co", "")
 
 	handler := authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -47,7 +48,7 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 
 // Test that requests without Bearer prefix are rejected
 func TestAuthMiddleware_MissingBearerPrefix(t *testing.T) {
-	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co")
+	authMiddleware := NewAuthMiddleware("https://fxhknzpqqhrkpqothjvrx.supabase.co", "")
 
 	handler := authMiddleware.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

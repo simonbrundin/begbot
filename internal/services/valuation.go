@@ -1460,34 +1460,66 @@ func (m *BlocketValuationMethod) Valuate(ctx context.Context, productInfo Produc
 }
 
 func blocketSearch(ctx context.Context, client *http.Client, baseURL string, query string, category string) (*blocketSearchResponse, error) {
-	// Use blocket.se web search with category parameter (supports filtering!)
-	// Use www prefix and + for spaces
-	url := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", strings.ReplaceAll(query, " ", "+"))
+	// First: try API-style baseURL/v1/search?query=... (used in tests/mocks and internal API)
+	apiBase := strings.TrimSuffix(baseURL, "/") + "/v1/search?query=" + url.QueryEscape(query)
 	if category != "" {
-		url += "&product_category=" + category
+		apiBase += "&product_category=" + url.QueryEscape(category)
 	}
-	log.Printf("Blocket web search URL: %s", url)
+	log.Printf("Blocket API search URL: %s", apiBase)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiBase, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			// Try to parse as JSON API response
+			var apiResp blocketSearchResponse
+			if err := json.NewDecoder(resp.Body).Decode(&apiResp); err == nil {
+				log.Printf("Blocket API: got %d docs for query %q", len(apiResp.Docs), query)
+				return &apiResp, nil
+			}
+			// If JSON decode failed, fall through to web scraping fallback
+			log.Printf("Blocket API: failed to decode JSON, falling back to web scrape: %v", err)
+		} else {
+			log.Printf("Blocket API returned status %d, falling back to web scrape", resp.StatusCode)
+		}
+	} else {
+		log.Printf("Blocket API request failed: %v, falling back to web scrape", err)
+	}
+
+	// Fallback: use blocket.se web search with category parameter (supports filtering!)
+	searchURL := fmt.Sprintf("https://www.blocket.se/recommerce/forsale/search?q=%s", strings.ReplaceAll(query, " ", "+"))
+	if category != "" {
+		searchURL += "&product_category=" + category
+	}
+	log.Printf("Blocket web search URL: %s", searchURL)
+
+	req2, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
+	req2.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req2.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req2.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
 
-	resp, err := client.Do(req)
+	resp2, err := client.Do(req2)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp2.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("blocket returned status %d", resp.StatusCode)
+	if resp2.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("blocket returned status %d", resp2.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp2.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

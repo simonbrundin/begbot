@@ -27,7 +27,8 @@ func main() {
 	fmt.Println("Ad text:", testAdText)
 	fmt.Println()
 
-	productInfo, err := llmService.ExtractProductInfo(ctx, testAdText, "https://tradera.se/test")
+	// ExtractProductInfo expects title, adText and link. Provide a short title as first arg.
+	productInfo, err := llmService.ExtractProductInfo(ctx, "Test Ad", testAdText, "https://tradera.se/test")
 	if err != nil {
 		log.Printf("Config default_model: %s", cfg.LLM.DefaultModel)
 		log.Printf("Config models: %v", cfg.LLM.Models)

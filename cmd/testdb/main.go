@@ -22,7 +22,7 @@ func main() {
 	defer pg.Close()
 
 	ctx := context.Background()
-	listings, err := pg.GetAllListings(ctx)
+	listings, err := pg.GetAllListings(ctx, 1000, 0)
 	if err != nil {
 		log.Fatalf("GetAllListings failed: %v", err)
 	}

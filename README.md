@@ -1,5 +1,134 @@
 # Begbot
 
+## Tradera Annonshantering
+
+### Hämtningsflöde (Annonslistor)
+
+När begbot hämtar annonser från Tradera används följande fallback-kedja:
+
+```
+1. Tradera SOAP API (prioriterad)
+   ↓ (om API misslyckas eller saknas)
+2. Direkt scraping (utan proxy)
+   ↓ (om blockerad eller misstänkt)
+3. Evomi Scraper (partner)
+   ↓ (om Evomi misslyckas)
+4. Proxy-baserad fetch (sista utväg)
+```
+
+Se `internal/services/marketplace.go:203` för implementationsdetaljer.
+
+### Enrichment-flöde (Detaljer per annons)
+
+För varjeTradera-annons som ska sparas finns följande flöde:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TRADERA ENRICHMENT FLOW                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  1. [START] Processing ad: https://www.tradera.com/item/xxx                │
+│      → Initial price: XXX SEK, Marketplace: tradera                         │
+│                                                                             │
+│  2. [LLM] Extract product info                                             │
+│      → Manufacturer, Model, Category, Storage                              │
+│                                                                             │
+│  3. [SHIPPING] Determine shipping costs                                     │
+│      → Use Blocket API if available, else LLM estimate                    │
+│                                                                             │
+│  4. [VALIDATION] Match against existing products                           │
+│      → Create new product if not found                                     │
+│                                                                             │
+│  5. [INTACT] Evaluate product condition                                    │
+│      → Skip if damaged or has issues                                       │
+│                                                                             │
+│  6. [TRADERA] Enrichment (if SaveOnlyBuyNow is enabled)                  │
+│      ┌────────────────────────────────────────────────────────────────┐    │
+│      │  a) API Enrichment (GetItem)                                  │    │
+│      │     → Attempt 1/3: Try Tradera API                           │    │
+│      │        ├─ SUCCESS: Found buy-now → Continue                  │    │
+│      │        └─ FAIL (429): Rate limited → Backoff & Retry         │    │
+│      │     → Attempt 2/3: Retry after backoff                       │    │
+│      │     → Attempt 3/3: Retry after backoff                      │    │
+│      │                                                              │    │
+│      │  b) Fallback: Scrape ad page directly                        │    │
+│      │     (if all API attempts failed)                             │    │
+│      │     → Parse HTML for buy-now price                           │    │
+│      │        ├─ SUCCESS: Found buy-now → Continue                 │    │
+│      │        └─ FAIL: No buy-now → Skip ad (auction only)         │    │
+│      │                                                              │    │
+│      │  c) Skip ad if:                                              │    │
+│      │     - No buy-now price found                                 │    │
+│      │     - SaveOnlyBuyNow disabled                                │    │
+│      │     - No tradera client available                            │    │
+│      └────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  7. [PRICE] Final price validation                                         │
+│      → Skip if price <= 0                                                  │
+│                                                                             │
+│  8. [DB] Save listing to database                                          │
+│      → Save images, valuations                                             │
+│                                                                             │
+│  9. [SUCCESS] Listing saved                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Loggningsnivåer
+
+Alla steg loggas med tydliga prefix:
+
+- `[START]` - Början av bearbetning
+- `[LLM]` - LLM-relaterade anrop
+- `[SHIPPING]` - Fraktberäkning
+- `[VALIDATION]` - Produktvalidering
+- `[INTACT]` - Skick-utvärdering
+- `[TRADERA]` - Tradera-enrichment
+- `[PRICE]` - Prisvalidering
+- `[DB]` - Databasoperationer
+- `[SUCCESS]` - Framgångsrik sparning
+
+### Konfigurationsalternativ
+
+I `config.yaml` under `tradera`:
+
+```yaml
+tradera:
+  save_only_buy_now: true # Spara endast annonser med köp nu-pris
+  enrich_timeout_seconds: 5 # Timeout för enrichment (sekunder)
+  enrich_max_retries: 3 # Antal försök vid API-anrop
+  enrich_backoff_seconds: 2 # Bas-backofftid vid rate limiting
+```
+
+### Exempel på loggutskrift
+
+```
+[INFO] ========================================
+[INFO] [START] Processing ad: https://www.tradera.com/item/123/456/test
+[INFO] [INFO] Marketplace: tradera, Initial price: 0.00 SEK
+[INFO] [INFO] Title: Apple Mac Mini M4 16GB
+[INFO] [LLM] Extracted product info: Manufacturer="Apple", Model="Mac Mini M4"
+[INFO] [SHIPPING] Final: cost=59 SEK, insurance=0 SEK
+[INFO] [VALIDATION] Validating listing against existing products...
+[INFO] [VALIDATION] Matched to product ID=42: Apple Mac Mini M4
+[INFO] [INTACT] Evaluating product condition...
+[INFO] [INTACT] Result: isIntact=true, issues=[]
+[INFO] [INTACT] Product is intact - continuing
+[INFO] [TRADERA] Starting enrichment flow for: https://www.tradera.com/item/123/456/test
+[INFO] [TRADERA] Ad has no buy-now price, checking SaveOnlyBuyNow policy
+[INFO] [TRADERA] SaveOnlyBuyNow is enabled, attempting enrichment
+[INFO] [TRADERA] Attempting API enrichment (GetItem)
+[INFO] [TRADERA] API enrichment attempt 1/3
+[WARNING] [TRADERA] Rate limited (429) on attempt 1/3, backing off 2s
+[INFO] [TRADERA] API enrichment attempt 2/3
+[INFO] [TRADERA] API enrichment succeeded on attempt 2
+[INFO] [TRADERA] API enrichment SUCCESS - buy-now: 5990.00 SEK, current: 4990.00 SEK
+[INFO] [PRICE] Final price for listing: 5990 SEK
+[INFO] [DB] Saving listing to database...
+[INFO] [DB] Listing saved successfully (ID: 1234)
+[INFO] [DB] Saving 4 image links...
+[INFO] [DB] Image links saved successfully
+[INFO] [SUCCESS] Listing saved: Apple Mac Mini M4 at 5990 SEK (valuation: 6500 SEK)
+```
+
 ## Secrets Management
 
 ### Configuration
