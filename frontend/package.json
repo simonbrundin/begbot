@@ -23,6 +23,8 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^12.7.0",
+    "@cucumber/pretty-formatter": "^3.2.0",
     "@iconify-json/lucide": "^1.2.26",
     "@nuxt/icon": "^1.15.0",
     "@nuxt/test-utils": "^3.23.0",

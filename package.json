@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "cucumber": "cucumber-js",
+    "test": "cucumber-js"
+  },
   "dependencies": {
     "@nuxtjs/supabase": "^2.0.3",
     "@nuxtjs/tailwindcss": "^6.14.0",
@@ -9,7 +13,9 @@
     "vue-router": "^5.0.2"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^12.7.0",
     "@nuxt/eslint": "^1.13.0",
+    "@supabase/supabase-js": "^2.98.0",
     "eslint": "^9.39.2"
   }
 }
