@@ -336,12 +336,7 @@ func InitializeCronJobScenario(ctx *godog.ScenarioContext) {
 }
 
 func getCronJobFeaturesPath(filename string) string {
-	cwd, _ := getCwd()
-	return cwd + "/features/" + filename
-}
-
-func getCwd() (string, error) {
-	return "/home/simon/repos/begbot/internal/test/gherkin", nil
+	return getFeaturesPath(filename)
 }
 
 func TestCronJobFeatures(t *testing.T) {

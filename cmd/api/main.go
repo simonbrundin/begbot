@@ -44,6 +44,9 @@ type Server struct {
 	scheduler            *services.Scheduler
 	messagingService     *services.MessagingService
 	valuationService     *services.ValuationService
+	// Injectable service used by handlers to create/search search terms.
+	// Using the interface from services package allows tests to inject a fake.
+	searchTermSvc services.SearchTermCreator
 }
 
 func main() {
@@ -84,6 +87,7 @@ func main() {
 		scheduler:            scheduler,
 		messagingService:     messagingService,
 		valuationService:     valuationService,
+		searchTermSvc:        services.NewSearchTermService(database),
 	}
 
 	// Initialize auth middleware
@@ -1366,25 +1370,35 @@ func (s *Server) searchTermsHandler(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		s.getSearchTerms(w, r)
 	case "POST":
-		var term models.SearchTerm
-		if err := json.NewDecoder(r.Body).Decode(&term); err != nil {
+		var input models.SearchTerm
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			api.WriteValidationError(w, []api.ValidationError{{Field: "body", Message: err.Error()}})
 			return
 		}
 		if errs := api.CombineErrors(
-			api.ValidateRequired(term.Description, "description"),
-			api.ValidateRequired(term.URL, "url"),
+			api.ValidateRequired(input.Description, "description"),
+			api.ValidateRequired(input.URL, "url"),
 		); len(errs) > 0 {
 			api.WriteValidationError(w, errs)
 			return
 		}
-		if err := s.db.SaveSearchTerm(r.Context(), &term); err != nil {
+
+		// Use injected SearchTermCreator if present (allows tests to inject fakes).
+		var searchTermSvc services.SearchTermCreator
+		if s.searchTermSvc != nil {
+			searchTermSvc = s.searchTermSvc
+		} else {
+			searchTermSvc = services.NewSearchTermService(s.db)
+		}
+		created, err := searchTermSvc.CreateSearchTerm(r.Context(), input.Description, input.URL, input.MarketplaceID)
+		if err != nil {
 			api.WriteServerError(w, err.Error())
 			return
 		}
+
 		w.WriteHeader(201)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(term)
+		json.NewEncoder(w).Encode(created)
 	default:
 		api.WriteError(w, "Method not allowed", "METHOD_NOT_ALLOWED", 405)
 	}

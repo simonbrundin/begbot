@@ -444,60 +444,85 @@ func (s *BotService) isNewLink(link string, newLinks []string) bool {
 	return false
 }
 
+func (s *BotService) shouldSendTradingRuleEmail(ad RawAd, listing *models.Listing, product *models.Product) bool {
+	// Special handling for Tradera: prefer buy-now listings.
+	if strings.ToLower(ad.Marketplace) == "tradera" {
+		if ad.HasBuyNow || ad.BuyNowPrice > 0 {
+			return true
+		}
+		// Try to enrich via Tradera client if available
+		if s.marketplaceService != nil && s.marketplaceService.traderaClient != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if details, err := s.marketplaceService.traderaClient.FetchAdDetails(ctx, ad.Link); err == nil && details != nil {
+				if details.BuyNowPrice > 0 || details.Price > 0 {
+					return true
+				}
+			}
+		}
+		// No buy-now found -> do not send
+		return false
+	}
+	// Non-Tradera: default to true (other checks happen in SendTradingRuleEmail)
+	return true
+}
+
 func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult, error) {
 	result := &ProcessAdResult{}
 	item := s.marketplaceService.ConvertToPotentialItem(ad)
 
+	// Initialize canonical steps and a per-ad stepper
+	steps := []string{"start", "llm", "shipping", "validation", "intact", "valuation", "evaluate", "tradera", "price", "db", "success"}
+	logAdapter := func(format string, args ...interface{}) { s.log(LogLevelInfo, format, args...) }
+	sp := NewStepper(steps, logAdapter)
+
 	// Log shipping info from Blocket API
 	if ad.ShippingCost != nil || ad.ShippingInsurance != nil {
-		s.log(LogLevelInfo, "Blocket API shipping: cost=%v, insurance=%v", ad.ShippingCost, ad.ShippingInsurance)
+		sp.Markf("shipping", "Blocket API shipping: cost=%v, insurance=%v", ad.ShippingCost, ad.ShippingInsurance)
 	}
 
 	productInfo, err := s.llmService.ExtractProductInfo(ctx, ad.Title, ad.AdText, ad.Link)
 	if err != nil {
-		s.log(LogLevelError, "Failed to extract product info: %v", err)
+		sp.Markf("llm", "Failed to extract product info: %v", err)
 		return result, err
 	}
 
-	s.log(LogLevelInfo, "LLM extracted: Manufacturer=%q, Model=%q, Category=%q, Storage=%q",
-		productInfo.Manufacturer, productInfo.Model, productInfo.Category, productInfo.Storage)
+	sp.Markf("llm", "LLM extracted: Manufacturer=%q, Model=%q, Category=%q, Storage=%q", productInfo.Manufacturer, productInfo.Model, productInfo.Category, productInfo.Storage)
 
 	// Only use LLM's shipping cost if Blocket API didn't provide one
 	if item.BuyShippingCost == 0 && productInfo.ShippingCost > 0 {
 		item.BuyShippingCost = int(productInfo.ShippingCost)
-		s.log(LogLevelInfo, "Using LLM shipping cost: %.0f", productInfo.ShippingCost)
+		sp.Markf("shipping", "Using LLM shipping cost: %.0f", productInfo.ShippingCost)
 	}
 
 	// Log final shipping cost
-	s.log(LogLevelInfo, "Final shipping: cost=%d, insurance=%d", item.BuyShippingCost, item.BuyShippingInsurance)
+	sp.Markf("shipping", "Final shipping: cost=%d, insurance=%d", item.BuyShippingCost, item.BuyShippingInsurance)
 
 	validationResult, err := s.ValidateListing(ctx, ad)
 	if err != nil {
-		s.log(LogLevelError, "Failed to validate listing: %v", err)
+		sp.Markf("validation", "Failed to validate listing: %v", err)
 		return result, err
 	}
 
 	if validationResult == nil {
-		s.log(LogLevelWarning, "Listing validation failed - no matching product found for: %s", ad.Link)
+		sp.Markf("validation", "Listing validation failed - no matching product found for: %s", ad.Link)
 		return result, nil
 	}
 
 	intactResult, err := s.llmService.EvaluateProductIntact(ctx, ad.AdText, ad.Title)
-	s.log(LogLevelInfo, "DEBUG: intactResult=%v, err=%v", intactResult, err)
+	sp.Markf("intact", "DEBUG: intactResult=%v, err=%v", intactResult, err)
 	var isIntact *bool
 	var intactReasoning *string
 	if err != nil {
-		s.log(LogLevelWarning, "Failed to evaluate product intactness: %v - accepting product", err)
+		sp.Markf("intact", "Failed to evaluate product intactness: %v - accepting product", err)
 	} else if hasDamageInReasoning(intactResult.Reasoning) {
-		s.log(LogLevelWarning, "Product has damage mentioned in reasoning - skipping listing: %s, reasoning: %s",
-			ad.Link, intactResult.Reasoning)
+		sp.Markf("intact", "Product has damage mentioned in reasoning - skipping listing: %s, reasoning: %s", ad.Link, intactResult.Reasoning)
 		return result, nil
 	} else if len(intactResult.IssuesFound) > 0 {
-		s.log(LogLevelWarning, "Product has issues - skipping listing: %s, issues: %v, reasoning: %s",
-			ad.Link, intactResult.IssuesFound, intactResult.Reasoning)
+		sp.Markf("intact", "Product has issues - skipping listing: %s, issues: %v, reasoning: %s", ad.Link, intactResult.IssuesFound, intactResult.Reasoning)
 		return result, nil
 	} else {
-		s.log(LogLevelInfo, "Product is intact - no issues found, continuing...")
+		sp.Markf("intact", "Product is intact - no issues found, continuing...")
 		intactVal := true
 		isIntact = &intactVal
 		if intactResult.Reasoning != "" {
@@ -506,23 +531,22 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 	}
 
 	if validationResult.IsNewProduct {
-		s.log(LogLevelInfo, "New product detected: %s %s (%s) - collecting valuations before creation",
-			validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
+		sp.Markf("valuation", "New product detected: %s %s (%s) - collecting valuations before creation", validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
 
 		valInputs, err := s.valuationService.CollectAll(ctx, "", *validationResult.ProductInfo)
 		if err != nil {
-			s.log(LogLevelWarning, "Failed to collect valuations for new product: %v", err)
+			sp.Markf("valuation", "Failed to collect valuations for new product: %v", err)
 		}
 
 		if len(valInputs) == 0 {
-			s.log(LogLevelWarning, "No valuations collected for new product - skipping listing: %s", ad.Link)
+			sp.Markf("valuation", "No valuations collected for new product - skipping listing: %s", ad.Link)
 			return result, nil
 		}
 
 		output, err := s.valuationService.Compile(ctx, valInputs)
 		if err != nil {
-			s.log(LogLevelWarning, "Failed to compile valuations for new product: %v", err)
-			s.log(LogLevelWarning, "Skipping listing due to valuation failure: %s", ad.Link)
+			sp.Markf("valuation", "Failed to compile valuations for new product: %v", err)
+			sp.Markf("valuation", "Skipping listing due to valuation failure: %s", ad.Link)
 			return result, nil
 		}
 
@@ -532,30 +556,29 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 			Category: &validationResult.ProductInfo.Category,
 		}
 		if err := s.database.CreateProduct(ctx, product); err != nil {
-			s.log(LogLevelError, "Failed to create product: %v", err)
+			sp.Markf("db", "Failed to create product: %v", err)
 			return result, err
 		}
 
 		// Save valuations BEFORE checking save/auto-enable criteria
 		if err := s.valuationService.SaveValuations(ctx, fmt.Sprintf("%d", product.ID), valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save valuations for new product: %v", err)
+			sp.Markf("valuation", "Failed to save valuations for new product: %v", err)
 		}
 
 		if err := s.saveBlocketCategoryFromValuations(ctx, product, valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", product.ID, err)
+			sp.Markf("db", "Failed to save Blocket category for product %d: %v", product.ID, err)
 		}
 
 		// Now check if product should be saved
 		shouldSave, checkErr := s.database.ShouldSaveProduct(ctx, product.ID)
 		if checkErr != nil {
-			s.log(LogLevelWarning, "Failed to check save criteria for new product %d: %v", product.ID, checkErr)
+			sp.Markf("db", "Failed to check save criteria for new product %d: %v", product.ID, checkErr)
 		}
 
 		if !shouldSave {
-			s.log(LogLevelWarning, "New product %s %s does not meet save criteria - deleting product and skipping listing",
-				validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model)
+			sp.Markf("db", "New product %s %s does not meet save criteria - deleting product and skipping listing", validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model)
 			if delErr := s.database.DeleteProduct(ctx, product.ID); delErr != nil {
-				s.log(LogLevelWarning, "Failed to delete product: %v", delErr)
+				sp.Markf("db", "Failed to delete product: %v", delErr)
 			}
 			return result, nil
 		}
@@ -563,23 +586,23 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 		// Check if product should be auto-enabled
 		shouldEnable, checkErr := s.database.ShouldAutoEnableProduct(ctx, product.ID)
 		if checkErr != nil {
-			s.log(LogLevelWarning, "Failed to check auto-enable for new product %d: %v", product.ID, checkErr)
+			sp.Markf("db", "Failed to check auto-enable for new product %d: %v", product.ID, checkErr)
 		}
 
 		if shouldEnable {
 			if err := s.database.SetProductEnabled(ctx, product.ID, true); err != nil {
-				s.log(LogLevelWarning, "Failed to enable new product %d: %v", product.ID, err)
+				sp.Markf("db", "Failed to enable new product %d: %v", product.ID, err)
 			} else {
-				s.log(LogLevelInfo, "Auto-enabled new product: ID=%d (passed auto-enable criteria)", product.ID)
+				sp.Markf("db", "Auto-enabled new product: ID=%d (passed auto-enable criteria)", product.ID)
 			}
 		}
 
 		validationResult.Product = product
 		validationResult.ProductInfo.NewPrice = output.RecommendedPrice
-		s.log(LogLevelInfo, "Created enabled product: ID=%d, Name=%s", product.ID, *product.Name)
+		sp.Markf("db", "Created enabled product: ID=%d, Name=%s", product.ID, *product.Name)
 	}
 
-	s.log(LogLevelInfo, "Product identified: %s %s (%s)", validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
+	sp.Markf("evaluate", "Product identified: %s %s (%s)", validationResult.ProductInfo.Manufacturer, validationResult.ProductInfo.Model, validationResult.ProductInfo.Category)
 
 	item.ProductID = &validationResult.Product.ID
 	if item.SellPackagingCost == nil {
@@ -593,7 +616,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 
 	candidate, err := s.evaluateItem(ctx, item, validationResult.ProductInfo)
 	if err != nil {
-		s.log(LogLevelError, "Failed to evaluate item: %v", err)
+		sp.Markf("evaluate", "Failed to evaluate item: %v", err)
 		return result, err
 	}
 
@@ -604,7 +627,7 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 
 	valInputs, err := s.valuationService.CollectAll(ctx, strconv.FormatInt(productID, 10), *validationResult.ProductInfo)
 	if err != nil {
-		s.log(LogLevelWarning, "Failed to collect valuations: %v", err)
+		sp.Markf("valuation", "Failed to collect valuations: %v", err)
 		valInputs = nil
 	}
 
@@ -612,14 +635,14 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 	if len(valInputs) > 0 {
 		output, err := s.valuationService.Compile(ctx, valInputs)
 		if err != nil {
-			s.log(LogLevelWarning, "Failed to compile valuations: %v", err)
+			sp.Markf("valuation", "Failed to compile valuations: %v", err)
 			compiledValuation = candidate.EstimatedSell
 		} else {
 			compiledValuation = int(output.RecommendedPrice)
 		}
 
 		if err := s.saveBlocketCategoryFromValuations(ctx, validationResult.Product, valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save Blocket category for product %d: %v", productID, err)
+			sp.Markf("db", "Failed to save Blocket category for product %d: %v", productID, err)
 		}
 	} else {
 		compiledValuation = candidate.EstimatedSell
@@ -642,40 +665,43 @@ func (s *BotService) processAd(ctx context.Context, ad RawAd) (*ProcessAdResult,
 	}
 
 	if err := s.database.SaveListing(ctx, listing); err != nil {
-		s.log(LogLevelError, "Failed to save listing: %v", err)
+		sp.Markf("db", "Failed to save listing: %v", err)
 		return result, err
 	}
 
 	if len(ad.ImageURLs) > 0 {
 		if err := s.database.SaveImageLinks(ctx, listing.ID, ad.ImageURLs); err != nil {
-			s.log(LogLevelWarning, "Failed to save image links: %v", err)
+			sp.Markf("db", "Failed to save image links: %v", err)
 		}
 	}
 
-	s.log(LogLevelInfo, "Saved listing for %s at %d SEK (valuation: %d SEK)", *validationResult.Product.Name, item.BuyPrice, compiledValuation)
+	sp.Markf("db", "Saved listing for %s at %d SEK (valuation: %d SEK)", *validationResult.Product.Name, item.BuyPrice, compiledValuation)
 
 	if len(valInputs) > 0 {
 		productIDStr := fmt.Sprintf("%d", productID)
 		if err := s.valuationService.SaveValuations(ctx, productIDStr, valInputs); err != nil {
-			s.log(LogLevelWarning, "Failed to save valuations: %v", err)
+			sp.Markf("db", "Failed to save valuations: %v", err)
 		}
 	}
 
 	err = s.SendTradingRuleEmail(ctx, listing, validationResult.Product, s.currentSearchTermID)
 	if err != nil {
-		s.log(LogLevelWarning, "Failed to send trading rule email: %v", err)
+		sp.Markf("tradera", "Failed to send trading rule email: %v", err)
 	} else {
 		result.EmailSent = true
+		sp.Markf("tradera", "Sent trading rule email for listing: %s", listing.Link)
 	}
 
 	if candidate.ShouldBuy {
-		s.log(LogLevelInfo, "RECOMMENDATION: Buy %s for %d SEK (profit: %d SEK)", item.SourceLink, candidate.TotalCost, candidate.EstimatedSell-candidate.TotalCost)
+		sp.Markf("evaluate", "RECOMMENDATION: Buy %s for %d SEK (profit: %d SEK)", item.SourceLink, candidate.TotalCost, candidate.EstimatedSell-candidate.TotalCost)
 	}
 
 	result.Saved = true
 	if validationResult.IsNewProduct {
 		result.NewProduct = true
 	}
+
+	sp.Markf("success", "Processing complete for %s", ad.Link)
 
 	return result, nil
 }

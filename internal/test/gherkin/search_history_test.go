@@ -78,7 +78,7 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Background steps
-	ctx.Given("a search history service is available", func(sc *godog.Step) error {
+	ctx.Given("a search history service is available", func() error {
 		if tc.service == nil {
 			tc.mockDB = &mockSearchHistoryDB{history: []models.SearchHistory{}}
 			tc.service = services.NewSearchHistoryService(tc.mockDB)
@@ -86,51 +86,51 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 		return nil
 	})
 
-	ctx.Given("the database is connected", func(sc *godog.Step) error {
+	ctx.Given("the database is connected", func() error {
 		tc.mockDB.err = nil
 		return nil
 	})
 
 	// Record search steps
-	ctx.When("a user searches for {string} with URL {string}", func(sc *godog.Step, termDesc, url string) error {
+	ctx.When("a user searches for {string} with URL {string}", func(termDesc, url string) error {
 		tc.result, tc.err = tc.service.RecordSearch(tc.ctx, 1, termDesc, url, 10, 3)
 		return nil
 	})
 
-	ctx.And("the search finds {int} results with {int} new ads", func(sc *godog.Step, results, newAds int) error {
+	ctx.Step("the search finds {int} results with {int} new ads", func(results, newAds int) error {
 		// This is already set in the previous step, but we keep it for clarity
 		return nil
 	})
 
-	ctx.Then("the search should be saved successfully", func(sc *godog.Step) error {
+	ctx.Then("the search should be saved successfully", func() error {
 		if tc.err != nil {
 			return errors.New("expected no error, got: " + tc.err.Error())
 		}
 		return nil
 	})
 
-	ctx.And("the search should have a valid ID", func(sc *godog.Step) error {
+	ctx.Step("the search should have a valid ID", func() error {
 		if tc.result == nil || tc.result.ID == 0 {
 			return errors.New("expected valid ID")
 		}
 		return nil
 	})
 
-	ctx.And("the search term description should be {string}", func(sc *godog.Step, expected string) error {
+	ctx.Step("the search term description should be {string}", func(expected string) error {
 		if tc.result.SearchTermDesc != expected {
 			return errors.New("expected " + expected + ", got " + tc.result.SearchTermDesc)
 		}
 		return nil
 	})
 
-	ctx.And("the results found should be {int}", func(sc *godog.Step, expected int) error {
+	ctx.Step("the results found should be {int}", func(expected int) error {
 		if tc.result.ResultsFound != expected {
 			return errors.New("expected " + string(rune(expected)) + ", got " + string(rune(tc.result.ResultsFound)))
 		}
 		return nil
 	})
 
-	ctx.And("the new ads found should be {int}", func(sc *godog.Step, expected int) error {
+	ctx.Step("the new ads found should be {int}", func(expected int) error {
 		if tc.result.NewAdsFound != expected {
 			return errors.New("expected " + string(rune(expected)) + ", got " + string(rune(tc.result.NewAdsFound)))
 		}
@@ -138,7 +138,7 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Get history with data
-	ctx.Given("the database has {int} search records", func(sc *godog.Step, count int) error {
+	ctx.Given("the database has {int} search records", func(count int) error {
 		now := time.Now()
 		tc.mockDB.history = make([]models.SearchHistory, count)
 		for i := 0; i < count; i++ {
@@ -154,26 +154,26 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 		return nil
 	})
 
-	ctx.When("the user requests search history for page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+	ctx.When("the user requests search history for page {int} with {int} items per page", func(page, pageSize int) error {
 		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
 		return nil
 	})
 
-	ctx.Then("the response should contain {int} search records", func(sc *godog.Step, expected int) error {
+	ctx.Then("the response should contain {int} search records", func(expected int) error {
 		if len(tc.history) != expected {
 			return errors.New("expected " + string(rune(expected)) + " records, got " + string(rune(len(tc.history))))
 		}
 		return nil
 	})
 
-	ctx.And("the total count should be {int}", func(sc *godog.Step, expected int) error {
+	ctx.Step("the total count should be {int}", func(expected int) error {
 		if tc.count != expected {
 			return errors.New("expected count " + string(rune(expected)) + ", got " + string(rune(tc.count)))
 		}
 		return nil
 	})
 
-	ctx.And("the first record should have search term {string}", func(sc *godog.Step, expected string) error {
+	ctx.Step("the first record should have search term {string}", func(expected string) error {
 		if len(tc.history) == 0 {
 			return errors.New("no history records")
 		}
@@ -184,30 +184,30 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Empty history
-	ctx.Given("the database has no search records", func(sc *godog.Step) error {
+	ctx.Given("the database has no search records", func() error {
 		tc.mockDB.history = []models.SearchHistory{}
 		return nil
 	})
 
-	ctx.When("the user requests search history", func(sc *godog.Step) error {
+	ctx.When("the user requests search history", func() error {
 		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, 1, 20)
 		return nil
 	})
 
 	// Pagination
-	ctx.When("the user requests page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+	ctx.When("the user requests page {int} with {int} items per page", func(page, pageSize int) error {
 		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
 		return nil
 	})
 
-	ctx.Then("the response should contain {int} items", func(sc *godog.Step, expected int) error {
+	ctx.Then("the response should contain {int} items", func(expected int) error {
 		if len(tc.history) != expected {
 			return errors.New("expected " + string(rune(expected)) + " items, got " + string(rune(len(tc.history))))
 		}
 		return nil
 	})
 
-	ctx.And("the first item on page {int} should have ID {int}", func(sc *godog.Step, page, expectedID int) error {
+	ctx.Step("the first item on page {int} should have ID {int}", func(page, expectedID int) error {
 		if len(tc.history) == 0 {
 			return errors.New("no history records")
 		}
@@ -218,19 +218,19 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Invalid pagination
-	ctx.When("the user requests page {int}", func(sc *godog.Step, page int) error {
+	ctx.When("the user requests page {int}", func(page int) error {
 		tc.history, tc.count, tc.err = tc.service.GetHistory(tc.ctx, page, 20)
 		return nil
 	})
 
-	ctx.Then("the request should succeed", func(sc *godog.Step) error {
+	ctx.Then("the request should succeed", func() error {
 		if tc.err != nil {
 			return errors.New("expected no error, got: " + tc.err.Error())
 		}
 		return nil
 	})
 
-	ctx.And("the count should be {int}", func(sc *godog.Step, expected int) error {
+	ctx.Step("the count should be {int}", func(expected int) error {
 		if tc.count != expected {
 			return errors.New("expected count " + string(rune(expected)) + ", got " + string(rune(tc.count)))
 		}
@@ -238,17 +238,17 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Database errors
-	ctx.Given("the database is unavailable", func(sc *godog.Step) error {
+	ctx.Given("the database is unavailable", func() error {
 		tc.mockDB.err = errors.New("database unavailable")
 		return nil
 	})
 
-	ctx.When("the user attempts to record a search", func(sc *godog.Step) error {
+	ctx.When("the user attempts to record a search", func() error {
 		tc.result, tc.err = tc.service.RecordSearch(tc.ctx, 1, "Test", "https://...", 10, 2)
 		return nil
 	})
 
-	ctx.Then("an error should be returned", func(sc *godog.Step) error {
+	ctx.Then("an error should be returned", func() error {
 		if tc.err == nil {
 			return errors.New("expected error, got nil")
 		}
@@ -256,7 +256,7 @@ func InitializeSearchHistoryScenario(ctx *godog.ScenarioContext) {
 	})
 
 	// Large page size
-	ctx.When("the user requests page {int} with {int} items per page", func(sc *godog.Step, page, pageSize int) error {
+	ctx.When("the user requests page {int} with {int} items per page", func(page, pageSize int) error {
 		_, _, tc.err = tc.service.GetHistory(tc.ctx, page, pageSize)
 		return nil
 	})

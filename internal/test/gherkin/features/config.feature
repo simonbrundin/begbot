@@ -46,12 +46,12 @@ Feature: Configuration
 
   Scenario: Load configuration with scraping settings
     Given a config file with scraping:
-      | marketplace | enabled | timeout |
-      | tradera     | false   | 10s     |
-      | blocket     | false   | 10s     |
+      | marketplace | timeout |
+      | tradera     | 10s     |
+      | blocket     | 10s     |
     When loading the configuration
-    Then tradera should be disabled
-    And blocket should be disabled
+    Then tradera should be configured
+    And blocket should be configured
 
   Scenario: Load configuration with valuation settings
     Given a config file with valuation:
