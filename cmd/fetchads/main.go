@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	log.SetOutput(os.Stderr)
+	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 }
 
