@@ -1,7 +1,14 @@
 {
   "scripts": {
     "cucumber": "cucumber-js",
-    "test": "cucumber-js"
+    "test": "cucumber-js",
+    "test:auth": "cucumber-js .features/autentisering",
+    "test:frontend": "cucumber-js .features/frontend",
+    "test:trading": "cucumber-js .features/trading_rules_email.feature .features/tradera_valuation.feature",
+    "test:valuation": "cucumber-js .features/värdering .features/blocket_valuation.feature .features/tradera_valuation.feature",
+    "test:search": "cucumber-js .features/search_terms.feature .features/search_history.feature",
+    "test:utils": "cucumber-js .features/utils.feature",
+    "test:config": "cucumber-js .features/config.feature"
   },
   "dependencies": {
     "@nuxtjs/supabase": "^2.0.3",
