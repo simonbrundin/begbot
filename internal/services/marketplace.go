@@ -393,6 +393,9 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 
 	var ads []RawAd
 	for _, item := range items {
+		if item.Price == 0 {
+			continue
+		}
 		ad := RawAd{
 			Link:        item.Link,
 			Title:       item.Title,
