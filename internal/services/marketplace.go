@@ -1,6 +1,11 @@
 package services
 
 import (
+	"begbot/internal/config"
+	"begbot/internal/marketplaces"
+	"begbot/internal/models"
+	"begbot/internal/proxy"
+	"begbot/internal/scraper"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,20 +17,65 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"begbot/internal/config"
-	"begbot/internal/models"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 type MarketplaceService struct {
-	cfg         *config.Config
-	lastReqTime time.Time
+	cfg           *config.Config
+	lastReqTime   time.Time
+	traderaClient TraderaFetcher
+	proxyProvider proxy.ProxyProvider
+	evomiScraper  EvomiFetcher
+	logger        *log.Logger
+	fetchDirect   func(ctx context.Context, searchURL string) ([]RawAd, bool, error)
+	fetchFromURL  func(ctx context.Context, searchURL string) ([]RawAd, error)
+}
+
+type EvomiFetcher interface {
+	FetchTraderaHTML(ctx context.Context, query string) (string, error)
+}
+
+type TraderaFetcher interface {
+	FetchAds(ctx context.Context, query string) ([]marketplaces.RawAd, error)
 }
 
 func NewMarketplaceService(cfg *config.Config) *MarketplaceService {
-	return &MarketplaceService{cfg: cfg}
+	traderaClient := marketplaces.NewTraderaClient(&cfg.Scraping.Tradera)
+
+	proxyProvider, err := proxy.NewProvider(proxy.ProxyConfig{
+		Provider: cfg.Scraping.Proxy.Provider,
+		APIKey:   cfg.Scraping.Proxy.APIKey,
+		Country:  cfg.Scraping.Proxy.Country,
+		Username: cfg.Scraping.Proxy.Username,
+		Password: cfg.Scraping.Proxy.Password,
+	})
+	if err != nil {
+		log.Printf("Failed to initialize proxy: %v, using no proxy", err)
+		proxyProvider = &proxy.NoProxy{}
+	}
+
+	var evomiScraper *scraper.EvomiScraper
+	if cfg.Scraping.Scraper.EvomiAPIKey != "" {
+		evomiScraper, err = scraper.NewEvomiScraper(&cfg.Scraping.Scraper, proxyProvider)
+		if err != nil {
+			log.Printf("Failed to initialize Evomi scraper: %v", err)
+		}
+	}
+
+	s := &MarketplaceService{
+		cfg:           cfg,
+		traderaClient: traderaClient,
+		proxyProvider: proxyProvider,
+		evomiScraper:  evomiScraper,
+		logger:        log.Default(),
+	}
+
+	s.fetchDirect = s.fetchTraderaAdsDirect
+	s.fetchFromURL = s.fetchTraderaAdsFromURL
+
+	return s
 }
 
 type RawAd struct {
@@ -36,11 +86,10 @@ type RawAd struct {
 	ImageURLs         []string
 	AdDate            time.Time
 	Marketplace       string
-	ShippingCost      *float64 // NULL if unknown, 0 if free, positive value if specified
-	ShippingInsurance *float64 // NULL if unknown, positive value if specified (e.g., köpskydd)
+	ShippingCost      *float64
+	ShippingInsurance *float64
 }
 
-// FetchAdDetails fetches detailed information from an individual ad page
 func (s *MarketplaceService) FetchAdDetails(ctx context.Context, adURL string) (*BlocketAdDetails, error) {
 	adID := extractBlocketAdID(adURL)
 	if adID == 0 {
@@ -60,13 +109,11 @@ func parseBlocketAdPage(body []byte, adURL string) (*RawAd, error) {
 		Marketplace: "blocket",
 	}
 
-	// Extract title
 	ad.Title = strings.TrimSpace(doc.Find("h1").First().Text())
 	if ad.Title == "" {
 		ad.Title = strings.TrimSpace(doc.Find("[data-test='subject']").First().Text())
 	}
 
-	// Extract description - look for body/description section
 	description := ""
 	doc.Find("[data-test='body'], .body, .description, [itemprop='description']").Each(func(i int, s *goquery.Selection) {
 		if description == "" {
@@ -74,9 +121,7 @@ func parseBlocketAdPage(body []byte, adURL string) (*RawAd, error) {
 		}
 	})
 
-	// If no description found, try to get any text content
 	if description == "" {
-		// Try to find main content area
 		doc.Find("main, article, .main-content, #main-content").Each(func(i int, s *goquery.Selection) {
 			if description == "" {
 				description = strings.TrimSpace(s.Text())
@@ -84,18 +129,15 @@ func parseBlocketAdPage(body []byte, adURL string) (*RawAd, error) {
 		})
 	}
 
-	// Last resort: get all text from body
 	if description == "" {
 		description = strings.TrimSpace(doc.Find("body").Text())
 	}
 
 	ad.AdText = description
 
-	// Extract price
 	priceText := doc.Find("[data-test='price'], .price").First().Text()
 	ad.Price = parsePrice(priceText)
 
-	// Extract shipping cost from ad page
 	shippingText := ""
 	doc.Find("[data-test='shipping-section'], .shipping-info").Each(func(i int, s *goquery.Selection) {
 		if shippingText == "" {
@@ -140,8 +182,248 @@ func (s *MarketplaceService) FetchAds(ctx context.Context, query string) ([]RawA
 }
 
 func (s *MarketplaceService) fetchTraderaAds(ctx context.Context, query string) ([]RawAd, error) {
-	url := fmt.Sprintf("https://www.tradera.com/search?q=%s", strings.ReplaceAll(query, " ", "+"))
-	return s.fetchTraderaAdsFromURL(ctx, url)
+	if s.logger == nil {
+		s.logger = log.Default()
+	}
+	searchURL := fmt.Sprintf("https://www.tradera.com/search?q=%s", strings.ReplaceAll(query, " ", "+"))
+
+	if s.traderaClient != nil {
+		if s.cfg == nil || s.cfg.Scraping.Tradera.AppID != "" || s.cfg.Scraping.Tradera.AppKey != "" {
+			s.logger.Printf("Trying Tradera API for query: %s", query)
+			apiAds, apiErr := s.traderaClient.FetchAds(ctx, query)
+			if apiErr != nil {
+				s.logger.Printf("Tradera API failed: %v; attempting direct scrape", apiErr)
+			} else if len(apiAds) > 0 {
+				s.logger.Printf("Fetched %d ads from Tradera API", len(apiAds))
+				return convertMarketplacesRawAds(apiAds), nil
+			} else {
+				s.logger.Printf("Tradera API returned no ads; attempting direct scrape")
+			}
+		} else {
+			s.logger.Printf("Tradera client present but no app credentials in cfg; skipping API call and attempting direct scrape")
+		}
+	}
+
+	ads, blocked, err := s.fetchDirect(ctx, searchURL)
+	if err == nil && len(ads) > 0 && !blocked {
+		s.logger.Printf("Fetched %d ads from Tradera via direct scrape", len(ads))
+		return ads, nil
+	}
+	if blocked {
+		s.logger.Printf("Direct scrape appears blocked or suspicious; switching to Evomi Scraper (if configured)")
+	} else if err != nil {
+		s.logger.Printf("Direct scrape failed: %v; attempting Evomi Scraper if available", err)
+	} else {
+		s.logger.Printf("Direct scrape returned no ads; falling back to other providers")
+	}
+
+	if s.evomiScraper != nil {
+		s.logger.Printf("Trying partner scraper (Evomi) for query: %s", query)
+		htmlContent, evErr := s.evomiScraper.FetchTraderaHTML(ctx, query)
+		if evErr != nil {
+			s.logger.Printf("Evomi scraper failed: %v", evErr)
+		} else if htmlContent != "" {
+			doc, docErr := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+			if docErr != nil {
+				s.logger.Printf("Failed to parse Evomi HTML: %v", docErr)
+			} else {
+				evAds := s.ParseTraderaDoc(doc)
+				if len(evAds) > 0 {
+					s.logger.Printf("Fetched %d ads from Evomi Scraper API", len(evAds))
+					return evAds, nil
+				}
+			}
+		}
+	}
+
+	s.logger.Printf("Falling back to proxy fetch for %s", searchURL)
+	return s.fetchFromURL(ctx, searchURL)
+}
+
+const directResultThreshold = 10
+
+func (s *MarketplaceService) fetchTraderaAdsDirect(ctx context.Context, searchURL string) ([]RawAd, bool, error) {
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to create direct request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("direct fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read direct response: %w", err)
+	}
+
+	blocked := false
+	statusCode := resp.StatusCode
+	lowerBody := strings.ToLower(string(body))
+
+	if statusCode == http.StatusForbidden || statusCode == http.StatusTooManyRequests || statusCode == http.StatusServiceUnavailable {
+		blocked = true
+		log.Printf("Direct fetch returned status %d, treating as blocked", statusCode)
+	}
+
+	antiBotMarkers := []string{"captcha", "recaptcha", "cloudflare", "please enable javascript", "rate limited", "rate limit"}
+	for _, m := range antiBotMarkers {
+		if strings.Contains(lowerBody, m) {
+			blocked = true
+			log.Printf("Direct fetch response contains anti-bot marker %q", m)
+			break
+		}
+	}
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
+	if err != nil {
+		return nil, blocked, fmt.Errorf("failed to parse direct HTML: %w", err)
+	}
+	found := doc.Find("a[data-link-type='next-link']").Length()
+	if found < directResultThreshold {
+		blocked = true
+		log.Printf("Direct fetch found only %d result links (threshold %d) — treating as blocked/suspicious", found, directResultThreshold)
+	}
+
+	if blocked {
+		return nil, true, nil
+	}
+
+	ads := s.ParseTraderaDoc(doc)
+	return ads, false, nil
+}
+
+func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
+	type ItemData struct {
+		Link   string
+		Title  string
+		Price  float64
+		Image  string
+		ItemID string
+	}
+
+	items := make(map[string]ItemData)
+
+	doc.Find("a[data-link-type='next-link']").Each(func(i int, sel *goquery.Selection) {
+		link, _ := sel.Attr("href")
+		if link == "" || !strings.Contains(link, "/item/") {
+			return
+		}
+
+		if !strings.HasPrefix(link, "http") {
+			link = "https://www.tradera.com" + link
+		}
+
+		if _, exists := items[link]; exists {
+			return
+		}
+
+		ariaDesc, _ := sel.Attr("aria-describedby")
+		itemID := ""
+		if ariaDesc != "" {
+			parts := strings.Fields(ariaDesc)
+			for _, p := range parts {
+				if strings.HasSuffix(p, "-price") {
+					itemID = strings.TrimSuffix(p, "-price")
+					break
+				}
+			}
+		}
+
+		title := strings.TrimSpace(sel.Find(".item-card_title__okrrK").Text())
+		if title == "" {
+			title = strings.TrimSpace(sel.Find("[class*='title']").First().Text())
+		}
+		if title == "" {
+			titleAttr, _ := sel.Attr("title")
+			title = strings.TrimSpace(titleAttr)
+		}
+
+		var imageURL string
+		sel.Find("img").Each(func(_ int, imgSel *goquery.Selection) {
+			if src, ok := imgSel.Attr("src"); ok && src != "" && !strings.Contains(src, "data:") {
+				if strings.HasPrefix(src, "//") {
+					src = "https:" + src
+				}
+				imageURL = src
+				return
+			}
+		})
+
+		items[link] = ItemData{
+			Link:   link,
+			Title:  title,
+			Image:  imageURL,
+			ItemID: itemID,
+		}
+	})
+
+	doc.Find("[data-testid='bin-price'], [data-testid='price']").Each(func(i int, sel *goquery.Selection) {
+		priceText := strings.TrimSpace(sel.Text())
+		price := parsePrice(priceText)
+		if price == 0 {
+			return
+		}
+
+		priceID, _ := sel.Attr("id")
+		if priceID == "" {
+			return
+		}
+
+		itemID := strings.TrimSuffix(priceID, "-price")
+
+		for link, item := range items {
+			if item.ItemID == itemID {
+				item.Price = price
+				items[link] = item
+				break
+			}
+		}
+	})
+
+	var ads []RawAd
+	for _, item := range items {
+		ad := RawAd{
+			Link:        item.Link,
+			Title:       item.Title,
+			Price:       item.Price,
+			Marketplace: "tradera",
+		}
+		if item.Image != "" {
+			ad.ImageURLs = []string{item.Image}
+		}
+		ads = append(ads, ad)
+	}
+
+	return ads
+}
+
+func convertMarketplacesRawAds(ads []marketplaces.RawAd) []RawAd {
+	result := make([]RawAd, len(ads))
+	for i, ad := range ads {
+		result[i] = RawAd{
+			Link:              ad.Link,
+			Title:             ad.Title,
+			Price:             ad.Price,
+			AdText:            ad.AdText,
+			ImageURLs:         ad.ImageURLs,
+			AdDate:            ad.AdDate,
+			Marketplace:       ad.Marketplace,
+			ShippingCost:      ad.ShippingCost,
+			ShippingInsurance: ad.ShippingInsurance,
+		}
+	}
+	return result
 }
 
 func (s *MarketplaceService) fetchBlocketAds(ctx context.Context, query string) ([]RawAd, error) {
@@ -176,8 +458,14 @@ func (s *MarketplaceService) FetchAdsFromURL(ctx context.Context, marketplace st
 }
 
 func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchURL string) ([]RawAd, error) {
+	transport, err := s.proxyProvider.GetTransport()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get proxy transport: %w", err)
+	}
+
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
@@ -186,6 +474,8 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en;q=0.8")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -197,38 +487,60 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 		return nil, fmt.Errorf("tradera returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tradera: %w", err)
 	}
 
 	var ads []RawAd
 
-	doc.Find("a[data-test='item-card-link']").Each(func(i int, sel *goquery.Selection) {
+	seenLinks := make(map[string]bool)
+
+	doc.Find("a[data-link-type='next-link']").Each(func(i int, sel *goquery.Selection) {
 		link, _ := sel.Attr("href")
-		if link == "" {
+		if link == "" || !strings.Contains(link, "/item/") {
 			return
 		}
+
+		if seenLinks[link] {
+			return
+		}
+		seenLinks[link] = true
 
 		if !strings.HasPrefix(link, "http") {
 			link = "https://www.tradera.com" + link
 		}
 
-		titleSel := sel.Find("[data-test='item-card-title']")
-		title := strings.TrimSpace(titleSel.Text())
+		title := strings.TrimSpace(sel.Find(".item-card_title__okrrK").Text())
+		if title == "" {
+			title = strings.TrimSpace(sel.Find("[class*='title']").First().Text())
+		}
+		if title == "" {
+			titleAttr, _ := sel.Attr("title")
+			title = strings.TrimSpace(titleAttr)
+		}
 
-		priceSel := sel.Find("[data-test='item-card-price']")
-		priceText := strings.TrimSpace(priceSel.Text())
+		priceText := strings.TrimSpace(sel.Find(".item-card_priceDetails__TzN1U").Text())
+		if priceText == "" {
+			priceText = strings.TrimSpace(sel.Find("[class*='price']").First().Text())
+		}
 		price := parsePrice(priceText)
 
-		// Try to extract image from the card
 		var imageURLs []string
-		imgSel := sel.Find("img")
-		if imgSel.Length() > 0 {
-			if src, ok := imgSel.First().Attr("src"); ok && src != "" {
+		sel.Find("img").Each(func(_ int, imgSel *goquery.Selection) {
+			if src, ok := imgSel.Attr("src"); ok && src != "" && !strings.Contains(src, "data:") {
+				if strings.HasPrefix(src, "//") {
+					src = "https:" + src
+				}
 				imageURLs = []string{src}
+				return
 			}
-		}
+		})
 
 		ad := RawAd{
 			Link:        link,
@@ -246,8 +558,14 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 }
 
 func (s *MarketplaceService) fetchBlocketAdsFromURL(ctx context.Context, searchURL string) ([]RawAd, error) {
+	transport, err := s.proxyProvider.GetTransport()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get proxy transport: %w", err)
+	}
+
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout:   30 * time.Second,
+		Transport: transport,
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
@@ -285,7 +603,6 @@ func (s *MarketplaceService) fetchBlocketAdsFromURL(ctx context.Context, searchU
 			apiAd, err := s.fetchBlocketAdFromAPI(ctx, adID)
 			if err == nil && apiAd != nil {
 				ads[i].AdText = apiAd.AdText
-				// Copy shipping and insurance costs from API response
 				if apiAd.ShippingCost != nil {
 					ads[i].ShippingCost = apiAd.ShippingCost
 				}
@@ -313,7 +630,6 @@ func extractBlocketAdID(link string) int64 {
 }
 
 func parseBlocketHTML(body []byte) ([]RawAd, error) {
-	// First, parse JSON-LD for basic info
 	re := regexp.MustCompile(`<script[^>]*type="application/ld\+json"[^>]*id="seoStructuredData"[^>]*>([^<]+)</script>`)
 	matches := re.FindSubmatch(body)
 	if len(matches) < 2 {
@@ -345,30 +661,24 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 		return nil, fmt.Errorf("failed to unmarshal JSON-LD: %w", err)
 	}
 
-	// Look for shipping info in the HTML using the specific Blocket structure
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	// Map to store shipping cost by URL (nil = unknown, 0 = free, >0 = specified)
 	shippingCosts := make(map[string]*float64)
 	insuranceCosts := make(map[string]*float64)
 	shippingFoundCount := 0
 
-	// Look for shipping info in the HTML using the specific Blocket structure
 	doc.Find("section article, [data-test='item-card'], .item-card").Each(func(i int, s *goquery.Selection) {
-		// Try to find link
 		linkElem := s.Find("a[href]")
 		link, _ := linkElem.Attr("href")
 		if link != "" && !strings.HasPrefix(link, "http") {
 			link = "https://www.blocket.se" + link
 		}
 
-		// Look for shipping text in the specific location (2nd div inside section)
 		shippingText := ""
 
-		// Look for specific Blocket shipping element pattern
 		s.Find("div > div:nth-child(2) p, .shipping-info, [data-test='shipping-badge']").Each(func(j int, elem *goquery.Selection) {
 			if shippingText == "" {
 				text := strings.ToLower(strings.TrimSpace(elem.Text()))
@@ -378,7 +688,6 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 			}
 		})
 
-		// Fallback: Look in all paragraphs and spans for shipping-related text
 		if shippingText == "" {
 			s.Find("p, span").Each(func(j int, elem *goquery.Selection) {
 				if shippingText == "" {
@@ -418,19 +727,16 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 
 		price, _ := strconv.ParseFloat(item.Item.Offers.Price, 64)
 
-		// Get shipping cost from HTML parsing if available
 		var shippingCostPtr *float64
 		if cost, ok := shippingCosts[item.Item.URL]; ok {
 			shippingCostPtr = cost
 		}
 
-		// Get insurance cost from HTML parsing if available
 		var insuranceCostPtr *float64
 		if cost, ok := insuranceCosts[item.Item.URL]; ok {
 			insuranceCostPtr = cost
 		}
 
-		// Extract image URLs from JSON-LD
 		var imageURLs []string
 		if item.Item.Image != "" {
 			imageURLs = []string{item.Item.Image}
@@ -452,7 +758,6 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 		}
 	}
 
-	// Log summary of shipping costs
 	shippingCount := 0
 	freeShippingCount := 0
 	insuranceCount := 0
@@ -473,11 +778,9 @@ func parseBlocketHTML(body []byte) ([]RawAd, error) {
 }
 
 func extractShippingCost(text string) *float64 {
-	// Normalize text: replace non-breaking spaces with regular spaces
 	text = strings.ReplaceAll(text, "\u00a0", " ")
 	textLower := strings.ToLower(text)
 
-	// Check for free shipping indicators - return 0 (free shipping)
 	if strings.Contains(textLower, "gratis frakt") ||
 		strings.Contains(textLower, "fri frakt") ||
 		strings.Contains(textLower, "frakt ingår") {
@@ -485,8 +788,6 @@ func extractShippingCost(text string) *float64 {
 		return &free
 	}
 
-	// Look for patterns like "frakt 63 kr", "+ 50 kr frakt", "frakt: 75kr"
-	// Also handle "frakt från X kr" - use that price even if it's a minimum
 	patterns := []string{
 		`frakt[:\s]+(\d+)`,
 		`frakt[:\s]+(\d+)\s*kr`,
@@ -500,7 +801,6 @@ func extractShippingCost(text string) *float64 {
 		`frakt[:\s]+fr\.?[:\s]*(\d+)`,
 		`frakt fr\.?[:\s]+(\d+)`,
 		`frakt fr\.?[:\s]+(\d+)\s*kr`,
-		// Also match "frakt från X" without "kr"
 		`frakt[:\s]+från[:\s]+(\d+)(?:\s*kr)?`,
 	}
 
@@ -510,13 +810,11 @@ func extractShippingCost(text string) *float64 {
 		if len(matches) > 1 {
 			cost, err := strconv.ParseFloat(matches[1], 64)
 			if err == nil && cost > 0 && cost < 10000 {
-				// Sanity check: shipping cost should be less than 10000 kr
 				return &cost
 			}
 		}
 	}
 
-	// If shipping is mentioned but no price found (e.g., "kan skickas"), return nil (unknown)
 	if strings.Contains(textLower, "frakt") || strings.Contains(textLower, "skickas") {
 		return nil
 	}
@@ -525,7 +823,6 @@ func extractShippingCost(text string) *float64 {
 }
 
 func extractInsuranceCost(text string) *float64 {
-	// Normalize text: replace non-breaking spaces with regular spaces
 	text = strings.ReplaceAll(text, "\u00a0", " ")
 	textLower := strings.ToLower(text)
 
@@ -655,8 +952,14 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 		return nil, err
 	}
 
+	transport, err := s.proxyProvider.GetTransport()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get proxy transport: %w", err)
+	}
+
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:   10 * time.Second,
+		Transport: transport,
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -708,7 +1011,6 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 		images = append(images, img.URI)
 	}
 
-	// Extract shipping and insurance costs from shippingPrice text
 	var shippingCost *float64
 	var insuranceCost *float64
 	shippingPriceText := apiResp.LoaderData.ItemRecommerce.TransactableUIData.Sections.Sidebar.OptedIn.ShippingPrice.Text
@@ -716,7 +1018,6 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 	if shippingPriceText == "" {
 		log.Printf("[Blocket API] Ad %d: no shippingPrice in response", adID)
 	} else {
-		// Normalize text (replace non-breaking spaces)
 		normalizedText := strings.ReplaceAll(shippingPriceText, "\u00a0", " ")
 		shippingCost = extractShippingCost(normalizedText)
 		insuranceCost = extractInsuranceCost(normalizedText)
@@ -724,7 +1025,6 @@ func (s *MarketplaceService) fetchBlocketAdFromAPI(ctx context.Context, adID int
 			adID, shippingPriceText, normalizedText, shippingCost, insuranceCost)
 	}
 
-	// Extract category ID in format "1.93.3217" (parent.parent.id)
 	cat := apiResp.LoaderData.ItemRecommerce.ItemData.Category
 	blocketCategoryID := ""
 	if cat.Parent.Parent.ID > 0 {
@@ -768,4 +1068,434 @@ func (s *MarketplaceService) waitForRateLimit(ctx context.Context) error {
 	}
 	s.lastReqTime = time.Now()
 	return nil
+}
+
+func reverseString(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+func contains(s []string, str string) bool {
+	for _, v := range s {
+		if v == str {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeWeight(weightStr string) float64 {
+	re := regexp.MustCompile(`[\d.,]+`)
+	matches := re.FindStringSubmatch(weightStr)
+	if len(matches) == 0 {
+		return 0
+	}
+
+	weightStr = matches[0]
+	weightStr = strings.ReplaceAll(weightStr, ",", ".")
+
+	weight, err := strconv.ParseFloat(weightStr, 64)
+	if err != nil {
+		return 0
+	}
+
+	if strings.Contains(strings.ToLower(weightStr), "kg") {
+		weight *= 1000
+	}
+
+	return weight
+}
+
+func weightToGrams(weightStr string) (int, error) {
+	weight := normalizeWeight(weightStr)
+	if weight == 0 {
+		return 0, fmt.Errorf("could not parse weight: %s", weightStr)
+	}
+	return int(weight), nil
+}
+
+func extractUUIDFromSSN(ssn string) (string, error) {
+	re := regexp.MustCompile(`\d{8}-\d{4}`)
+	match := re.FindStringSubmatch(ssn)
+	if len(match) > 0 {
+		return match[0], nil
+	}
+	return "", fmt.Errorf("no UUID found in SSN: %s", ssn)
+}
+
+func extractDomainFromEmail(email string) string {
+	parts := strings.Split(email, "@")
+	if len(parts) > 1 {
+		return parts[1]
+	}
+	return ""
+}
+
+func formatCurrency(amount float64) string {
+	return fmt.Sprintf("%.2f kr", amount)
+}
+
+func formatTimeSince(t time.Time) string {
+	elapsed := time.Since(t)
+	if elapsed < time.Minute {
+		return "less than a minute"
+	}
+	if elapsed < time.Hour {
+		minutes := int(elapsed.Minutes())
+		return fmt.Sprintf("%d minute%s", minutes, suffix(minutes))
+	}
+	if elapsed < 24*time.Hour {
+		hours := int(elapsed.Hours())
+		return fmt.Sprintf("%d hour%s", hours, suffix(hours))
+	}
+	days := int(elapsed.Hours() / 24)
+	return fmt.Sprintf("%d day%s", days, suffix(days))
+}
+
+func suffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func clamp(val, min, max float64) float64 {
+	if val < min {
+		return min
+	}
+	if val > max {
+		return max
+	}
+	return val
+}
+
+func reverseRunes(r []rune) []rune {
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return r
+}
+
+func stringInSlice(s string, list []string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCII(s string) bool {
+	for _, c := range s {
+		if c > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+func removeNonASCII(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 128 {
+			return r
+		}
+		return -1
+	}, s)
+}
+
+func normalizeWhitespace(s string) string {
+	s = strings.TrimSpace(s)
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	return s
+}
+
+func removeNewlines(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func stringsEqualIgnoreCase(a, b string) bool {
+	return strings.EqualFold(a, b)
+}
+
+func isValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+
+func formatPhoneNumber(phone string) string {
+	phone = regexp.MustCompile(`[^\d]`).ReplaceAllString(phone, "")
+	if len(phone) == 10 {
+		return fmt.Sprintf("%s-%s-%s", phone[:3], phone[3:6], phone[6:])
+	}
+	return phone
+}
+
+func extractNumbers(s string) string {
+	return regexp.MustCompile(`\d+`).FindString(s)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func absInt(a int) int {
+	if a < 0 {
+		return -a
+	}
+	return a
+}
+
+func intToRoman(num int) string {
+	if num <= 0 {
+		return ""
+	}
+	values := []int{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
+	symbols := []string{"M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"}
+	result := ""
+	for i := 0; i < len(values); i++ {
+		for num >= values[i] {
+			result += symbols[i]
+			num -= values[i]
+		}
+	}
+	return result
+}
+
+func romanToInt(s string) int {
+	result := 0
+	prev := 0
+	for i := len(s) - 1; i >= 0; i-- {
+		val := 0
+		switch s[i] {
+		case 'I':
+			val = 1
+		case 'V':
+			val = 5
+		case 'X':
+			val = 10
+		case 'L':
+			val = 50
+		case 'C':
+			val = 100
+		case 'D':
+			val = 500
+		case 'M':
+			val = 1000
+		}
+		if val < prev {
+			result -= val
+		} else {
+			result += val
+		}
+		prev = val
+	}
+	return result
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+func isPalindrome(s string) bool {
+	s = strings.ToLower(s)
+	s = regexp.MustCompile(`[^a-z0-9]`).ReplaceAllString(s, "")
+	if len(s) <= 1 {
+		return true
+	}
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		if s[i] != s[j] {
+			return false
+		}
+	}
+	return true
+}
+
+func wordCount(s string) int {
+	return len(regexp.MustCompile(`\s+`).Split(strings.TrimSpace(s), -1))
+}
+
+func mostFrequentChar(s string) (rune, int) {
+	freq := make(map[rune]int)
+	for _, c := range s {
+		freq[c]++
+	}
+	var mostFreq rune
+	maxCount := 0
+	for c, count := range freq {
+		if count > maxCount {
+			maxCount = count
+			mostFreq = c
+		}
+	}
+	return mostFreq, maxCount
+}
+
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}
+
+func kebabToCamel(kebab string) string {
+	parts := strings.Split(kebab, "-")
+	for i, part := range parts {
+		if i == 0 {
+			continue
+		}
+		if len(part) > 0 {
+			runes := []rune(part)
+			runes[0] = unicode.ToUpper(runes[0])
+			parts[i] = string(runes)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func camelToKebab(camel string) string {
+	var result []rune
+	for i, r := range camel {
+		if unicode.IsUpper(r) && i > 0 {
+			result = append(result, '-')
+		}
+		result = append(result, unicode.ToLower(r))
+	}
+	return string(result)
+}
+
+func levenshteinDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	matrix := make([][]int, len(a)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(b)+1)
+	}
+	for i := 0; i <= len(a); i++ {
+		matrix[i][0] = i
+	}
+	for j := 0; j <= len(b); j++ {
+		matrix[0][j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			matrix[i][j] = minInt(matrix[i-1][j]+1, matrix[i][j-1]+1)
+			matrix[i][j] = minInt(matrix[i][j], matrix[i-1][j-1]+cost)
+		}
+	}
+	return matrix[len(a)][len(b)]
+}
+
+func hammingDistance(a, b string) int {
+	if len(a) != len(b) {
+		return -1
+	}
+	distance := 0
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			distance++
+		}
+	}
+	return distance
+}
+
+func isAnagram(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	freq := make(map[rune]int)
+	for _, c := range a {
+		freq[c]++
+	}
+	for _, c := range b {
+		freq[c]--
+		if freq[c] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isPangram(s string) bool {
+	alphabet := make(map[rune]bool)
+	for _, c := range strings.ToLower(s) {
+		if c >= 'a' && c <= 'z' {
+			alphabet[c] = true
+		}
+	}
+	return len(alphabet) == 26
+}
+
+func reverseWords(s string) string {
+	words := strings.Fields(s)
+	for i, j := 0, len(words)-1; i < j; i, j = i+1, j-1 {
+		words[i], words[j] = words[j], words[i]
+	}
+	return strings.Join(words, " ")
+}
+
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, word := range words {
+		if len(word) > 0 {
+			runes := []rune(word)
+			runes[0] = unicode.ToUpper(runes[0])
+			if len(runes) > 1 {
+				runes[1] = unicode.ToLower(runes[1])
+			}
+			words[i] = string(runes)
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func removeDuplicates(s []string) []string {
+	seen := make(map[string]bool)
+	result := []string{}
+	for _, v := range s {
+		if !seen[v] {
+			seen[v] = true
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func groupByLength(words []string) map[int][]string {
+	groups := make(map[int][]string)
+	for _, word := range words {
+		length := len(word)
+		groups[length] = append(groups[length], word)
+	}
+	return groups
 }
