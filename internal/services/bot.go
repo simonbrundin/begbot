@@ -838,11 +838,27 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 
 	// Use computed product-level valuation with confidence
 	computedValuation := listing.Valuation
+	confidence := 0.0
 	if listing.ProductID != nil && s.database != nil {
 		if cv, conf, cvErr := s.database.ComputeWeightedValuationForProduct(ctx, *listing.ProductID); cvErr == nil && cv > 0 {
 			computedValuation = cv
-			_ = conf // valuation confidence is not used for email settings anymore
+			confidence = conf
 		}
+	}
+
+	// Get trading rules for min_confidence check
+	minConfidence := 80
+	if s.database != nil {
+		if tradingRules, err := s.database.GetTradingRules(ctx); err == nil && tradingRules != nil && tradingRules.MinConfidence != nil {
+			minConfidence = *tradingRules.MinConfidence
+		}
+	}
+
+	// Skip if confidence is below minimum threshold
+	if confidence > 0 && confidence < float64(minConfidence) {
+		s.log(LogLevelInfo, "Listing does not pass email settings: confidence=%.2f (<%d%%)",
+			confidence, minConfidence)
+		return nil
 	}
 
 	profit := computedValuation - *listing.Price
