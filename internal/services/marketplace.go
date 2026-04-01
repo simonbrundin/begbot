@@ -188,7 +188,7 @@ func (s *MarketplaceService) fetchTraderaAds(ctx context.Context, query string) 
 	searchURL := fmt.Sprintf("https://www.tradera.com/search?q=%s", strings.ReplaceAll(query, " ", "+"))
 
 	if s.traderaClient != nil {
-		if s.cfg == nil || s.cfg.Scraping.Tradera.AppID != "" || s.cfg.Scraping.Tradera.AppKey != "" {
+		if s.cfg != nil && s.cfg.Scraping.Tradera.AppID != "" && s.cfg.Scraping.Tradera.AppKey != "" {
 			s.logger.Printf("Trying Tradera API for query: %s", query)
 			apiAds, apiErr := s.traderaClient.FetchAds(ctx, query)
 			if apiErr != nil {
@@ -207,7 +207,7 @@ func (s *MarketplaceService) fetchTraderaAds(ctx context.Context, query string) 
 	ads, blocked, err := s.fetchDirect(ctx, searchURL)
 	if err == nil && len(ads) > 0 && !blocked {
 		s.logger.Printf("Fetched %d ads from Tradera via direct scrape", len(ads))
-		return ads, nil
+		return s.fetchPricesForZeroPriceItems(ctx, ads), nil
 	}
 	if blocked {
 		s.logger.Printf("Direct scrape appears blocked or suspicious; switching to Evomi Scraper (if configured)")
@@ -230,7 +230,7 @@ func (s *MarketplaceService) fetchTraderaAds(ctx context.Context, query string) 
 				evAds := s.ParseTraderaDoc(doc)
 				if len(evAds) > 0 {
 					s.logger.Printf("Fetched %d ads from Evomi Scraper API", len(evAds))
-					return evAds, nil
+					return s.fetchPricesForZeroPriceItems(ctx, evAds), nil
 				}
 			}
 		}
@@ -391,11 +391,19 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 		}
 	})
 
+	priceCount := 0
+	for _, item := range items {
+		if item.Price > 0 {
+			priceCount++
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Printf("[Tradera scraper] Found %d items, %d with prices from data-testid selectors", len(items), priceCount)
+	}
+
 	var ads []RawAd
 	for _, item := range items {
-		if item.Price == 0 {
-			continue
-		}
 		ad := RawAd{
 			Link:        item.Link,
 			Title:       item.Title,
@@ -557,6 +565,11 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 	})
 
 	log.Printf("Found %d ads from Tradera", len(ads))
+
+	if len(ads) > 0 {
+		ads = s.fetchPricesForZeroPriceItems(ctx, ads)
+	}
+
 	return ads, nil
 }
 
@@ -1501,4 +1514,128 @@ func groupByLength(words []string) map[int][]string {
 		groups[length] = append(groups[length], word)
 	}
 	return groups
+}
+
+func extractTraderaPriceFromHTML(htmlContent string) float64 {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	if err != nil {
+		return 0
+	}
+
+	ogDesc, _ := doc.Find("meta[property='og:description']").Attr("content")
+	if ogDesc != "" {
+		price := parsePrice(ogDesc)
+		if price > 0 {
+			return price
+		}
+	}
+
+	foundPrice := 0.0
+	doc.Find("script[type='application/ld+json']").Each(func(i int, sel *goquery.Selection) {
+		if foundPrice > 0 {
+			return
+		}
+		jsonText := strings.TrimSpace(sel.Text())
+		if strings.Contains(jsonText, `"price"`) && strings.Contains(jsonText, `"priceCurrency":"SEK"`) {
+			foundPrice = extractPriceFromJSONLD(jsonText)
+		}
+	})
+
+	return foundPrice
+}
+
+func extractPriceFromJSONLD(jsonText string) float64 {
+	pricePattern := regexp.MustCompile(`"price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?`)
+	matches := pricePattern.FindStringSubmatch(jsonText)
+	if len(matches) > 1 {
+		price, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil {
+			return price
+		}
+	}
+	return 0
+}
+
+func (s *MarketplaceService) fetchTraderaItemPrice(ctx context.Context, itemURL string) (float64, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", itemURL, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("tradera item page returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	htmlContent := string(body)
+
+	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	ogDesc, _ := doc.Find("meta[property='og:description']").Attr("content")
+	if ogDesc != "" {
+		log.Printf("[DEBUG] og:description for %s: %s", itemURL, ogDesc)
+	}
+
+	return extractTraderaPriceFromHTML(htmlContent), nil
+}
+
+func (s *MarketplaceService) fetchPricesForZeroPriceItems(ctx context.Context, ads []RawAd) []RawAd {
+	zeroPriceCount := 0
+	for _, ad := range ads {
+		if ad.Price == 0 {
+			zeroPriceCount++
+		}
+	}
+
+	if zeroPriceCount == 0 {
+		return ads
+	}
+
+	if s.logger != nil {
+		s.logger.Printf("[Tradera scraper] Fetching prices for %d items with zero price from individual item pages", zeroPriceCount)
+	}
+
+	fetchedCount := 0
+	for i, ad := range ads {
+		if ad.Price == 0 {
+			price, err := s.fetchTraderaItemPrice(ctx, ad.Link)
+			if err != nil {
+				if s.logger != nil {
+					s.logger.Printf("[Tradera scraper] Failed to fetch price for %s: %v", ad.Link, err)
+				}
+			} else if price > 0 {
+				ads[i].Price = price
+				fetchedCount++
+				if s.logger != nil {
+					s.logger.Printf("[Tradera scraper] Fetched price %d SEK for %s", int(price), ad.Link)
+				}
+			} else {
+				if s.logger != nil {
+					s.logger.Printf("[Tradera scraper] Price was 0 for %s (HTML might not contain price info)", ad.Link)
+				}
+			}
+
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Printf("[Tradera scraper] Fetched prices for %d/%d zero-price items", fetchedCount, zeroPriceCount)
+	}
+
+	return ads
 }

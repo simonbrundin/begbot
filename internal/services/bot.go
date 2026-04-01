@@ -854,8 +854,8 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 		}
 	}
 
-	// Skip if confidence is below minimum threshold
-	if confidence > 0 && confidence < float64(minConfidence) {
+	// Skip if confidence is below minimum threshold or if no confidence exists
+	if confidence == 0 || confidence < float64(minConfidence) {
 		s.log(LogLevelInfo, "Listing does not pass email settings: confidence=%.2f (<%d%%)",
 			confidence, minConfidence)
 		return nil
