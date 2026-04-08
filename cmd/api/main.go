@@ -27,14 +27,7 @@ import (
 var logger *log.Logger
 
 func init() {
-	f, err := os.OpenFile("/home/simon/repos/begbot/fetch.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err == nil {
-		logger = log.New(f, "", log.LstdFlags)
-		logger.Println("=== LOG FILE INITIALIZED ===")
-	} else {
-		logger = log.New(os.Stdout, "", log.LstdFlags)
-		logger.Printf("Warning: could not open log file: %v", err)
-	}
+	logger = log.New(os.Stdout, "", log.LstdFlags)
 }
 
 type Server struct {
