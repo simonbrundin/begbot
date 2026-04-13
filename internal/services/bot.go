@@ -888,15 +888,15 @@ func (s *BotService) SendTradingRuleEmail(ctx context.Context, listing *models.L
 
 		subject := "Ny annons som passar dina trading rules - " + listing.Title
 
-		// Prepare template data
-		priceStr := ""
-		if listing.Price != nil {
-			priceStr = fmt.Sprintf("%d kr", *listing.Price)
+		// SKICKA INTE MEJL OM INGET KÖP NU-PRIS - ALLANSTYCKA BuyNowPrice
+		if listing.BuyNowPrice == nil || *listing.BuyNowPrice == 0 {
+			s.log(LogLevelInfo, "Skipping email - no BuyNowPrice for listing: %s", listing.Link)
+			return
 		}
-		emailProfit := computedValuation
-		if listing.Price != nil {
-			emailProfit = computedValuation - *listing.Price
-		}
+		priceForEmail := listing.BuyNowPrice
+
+		priceStr := fmt.Sprintf("%d kr", *priceForEmail)
+		emailProfit := computedValuation - *priceForEmail
 		if listing.ShippingCost != nil {
 			emailProfit -= *listing.ShippingCost
 		}

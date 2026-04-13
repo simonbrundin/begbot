@@ -199,10 +199,15 @@ func runSearchTerms(ctx context.Context, svc *services.SearchTermService, postgr
 			}
 
 			price := int(ad.Price)
+			if ad.BuyNowPrice > 0 && job.Marketplace.ID == 2 {
+				price = int(ad.BuyNowPrice)
+			}
+			buyNowPrice := int(ad.BuyNowPrice)
 			listing := &models.Listing{
 				ProductID:     &result.Product.ID,
 				Link:          ad.Link,
 				Price:         &price,
+				BuyNowPrice:   &buyNowPrice,
 				Description:   &ad.AdText,
 				MarketplaceID: &job.Marketplace.ID,
 				Status:        "draft",

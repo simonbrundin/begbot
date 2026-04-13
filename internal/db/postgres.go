@@ -135,6 +135,7 @@ func (p *Postgres) Migrate() error {
             is_my_listing BOOLEAN DEFAULT FALSE
         )`,
 		`ALTER TABLE listings ADD COLUMN IF NOT EXISTS title TEXT`,
+		`ALTER TABLE listings ADD COLUMN IF NOT EXISTS buy_now_price INTEGER`,
 		`CREATE TABLE IF NOT EXISTS traded_items (
             id SERIAL PRIMARY KEY,
             product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
@@ -445,14 +446,14 @@ func (p *Postgres) GetSoldTradedItems(ctx context.Context, limit int) ([]models.
 
 func (p *Postgres) SaveListing(ctx context.Context, listing *models.Listing) error {
 	query := `
-		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now, is_intact, intact_check_reasoning)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO listings (product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description, marketplace_id, status, publication_date, sold_date, is_my_listing, eligible_for_shipping, seller_pays_shipping, buy_now, buy_now_price, is_intact, intact_check_reasoning)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id
 	`
 	return p.db.QueryRowContext(ctx, query,
 		listing.ProductID, listing.Price, listing.Link, listing.ConditionID, listing.ShippingCost, listing.ShippingInsurance,
 		listing.Title, listToNullString(listing.Description), listing.MarketplaceID, listing.Status, listing.PublicationDate, listing.SoldDate, listing.IsMyListing,
-		listing.EligibleForShipping, listing.SellerPaysShipping, listing.BuyNow, listing.IsIntact, listToNullString(listing.IntactCheckReasoning),
+		listing.EligibleForShipping, listing.SellerPaysShipping, listing.BuyNow, listing.BuyNowPrice, listing.IsIntact, listToNullString(listing.IntactCheckReasoning),
 	).Scan(&listing.ID)
 }
 
@@ -520,7 +521,7 @@ func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (
 	query := `
 		SELECT id, product_id, price, valuation, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
-			eligible_for_shipping, seller_pays_shipping, buy_now, is_intact, intact_check_reasoning
+			eligible_for_shipping, seller_pays_shipping, buy_now, buy_now_price, is_intact, intact_check_reasoning
 		FROM listings WHERE product_id = $1 AND status = 'active'
 	`
 	var listing models.Listing
@@ -528,7 +529,7 @@ func (p *Postgres) GetListingByProductID(ctx context.Context, productID int64) (
 		&listing.ID, &listing.ProductID, &listing.Price, &listing.Valuation, &listing.Link, &listing.ConditionID,
 		&listing.ShippingCost, &listing.ShippingInsurance, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
-		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.IsIntact, &listing.IntactCheckReasoning,
+		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.BuyNowPrice, &listing.IsIntact, &listing.IntactCheckReasoning,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1060,7 +1061,7 @@ func (p *Postgres) GetAllListings(ctx context.Context, limit, offset int) ([]mod
 	query := `
 		SELECT id, product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
-			eligible_for_shipping, seller_pays_shipping, buy_now, is_intact, intact_check_reasoning
+			eligible_for_shipping, seller_pays_shipping, buy_now, buy_now_price, is_intact, intact_check_reasoning
 		FROM listings
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -1079,7 +1080,7 @@ func (p *Postgres) GetAllListings(ctx context.Context, limit, offset int) ([]mod
 			&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
 			&listing.ShippingCost, &listing.ShippingInsurance, &title, &description, &listing.MarketplaceID, &listing.Status,
 			&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
-			&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.IsIntact, &listing.IntactCheckReasoning,
+			&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.BuyNowPrice, &listing.IsIntact, &listing.IntactCheckReasoning,
 		)
 		if err != nil {
 			return nil, err
@@ -1244,7 +1245,7 @@ func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listin
 	query := `
 		SELECT id, product_id, price, link, condition_id, shipping_cost, shipping_insurance, title, description,
 			marketplace_id, status, publication_date, sold_date, created_at, is_my_listing,
-			eligible_for_shipping, seller_pays_shipping, buy_now, is_intact, intact_check_reasoning
+			eligible_for_shipping, seller_pays_shipping, buy_now, buy_now_price, is_intact, intact_check_reasoning
 		FROM listings WHERE id = $1
 	`
 	var listing models.Listing
@@ -1252,7 +1253,7 @@ func (p *Postgres) GetListingByID(ctx context.Context, id int64) (*models.Listin
 		&listing.ID, &listing.ProductID, &listing.Price, &listing.Link, &listing.ConditionID,
 		&listing.ShippingCost, &listing.ShippingInsurance, &listing.Title, &listing.Description, &listing.MarketplaceID, &listing.Status,
 		&listing.PublicationDate, &listing.SoldDate, &listing.CreatedAt, &listing.IsMyListing,
-		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.IsIntact, &listing.IntactCheckReasoning,
+		&listing.EligibleForShipping, &listing.SellerPaysShipping, &listing.BuyNow, &listing.BuyNowPrice, &listing.IsIntact, &listing.IntactCheckReasoning,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

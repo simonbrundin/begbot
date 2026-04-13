@@ -88,6 +88,7 @@ type RawAd struct {
 	Marketplace       string
 	ShippingCost      *float64
 	ShippingInsurance *float64
+	BuyNowPrice       float64
 }
 
 func (s *MarketplaceService) FetchAdDetails(ctx context.Context, adURL string) (*BlocketAdDetails, error) {
@@ -187,22 +188,8 @@ func (s *MarketplaceService) fetchTraderaAds(ctx context.Context, query string) 
 	}
 	searchURL := fmt.Sprintf("https://www.tradera.com/search?q=%s", strings.ReplaceAll(query, " ", "+"))
 
-	if s.traderaClient != nil {
-		if s.cfg != nil && s.cfg.Scraping.Tradera.AppID != "" && s.cfg.Scraping.Tradera.AppKey != "" {
-			s.logger.Printf("Trying Tradera API for query: %s", query)
-			apiAds, apiErr := s.traderaClient.FetchAds(ctx, query)
-			if apiErr != nil {
-				s.logger.Printf("Tradera API failed: %v; attempting direct scrape", apiErr)
-			} else if len(apiAds) > 0 {
-				s.logger.Printf("Fetched %d ads from Tradera API", len(apiAds))
-				return convertMarketplacesRawAds(apiAds), nil
-			} else {
-				s.logger.Printf("Tradera API returned no ads; attempting direct scrape")
-			}
-		} else {
-			s.logger.Printf("Tradera client present but no app credentials in cfg; skipping API call and attempting direct scrape")
-		}
-	}
+	// Använd alltid direct scrape för Tradera - API returnerar inget köp nu-pris
+	s.logger.Printf("Using direct scrape for Tradera (API does not provide BuyNowPrice)")
 
 	ads, blocked, err := s.fetchDirect(ctx, searchURL)
 	if err == nil && len(ads) > 0 && !blocked {
@@ -305,11 +292,12 @@ func (s *MarketplaceService) fetchTraderaAdsDirect(ctx context.Context, searchUR
 
 func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 	type ItemData struct {
-		Link   string
-		Title  string
-		Price  float64
-		Image  string
-		ItemID string
+		Link        string
+		Title       string
+		Price       float64
+		BuyNowPrice float64
+		Image       string
+		ItemID      string
 	}
 
 	items := make(map[string]ItemData)
@@ -368,7 +356,7 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 		}
 	})
 
-	doc.Find("[data-testid='bin-price'], [data-testid='price']").Each(func(i int, sel *goquery.Selection) {
+	doc.Find("[data-testid='bin-price']").Each(func(i int, sel *goquery.Selection) {
 		priceText := strings.TrimSpace(sel.Text())
 		price := parsePrice(priceText)
 		if price == 0 {
@@ -384,7 +372,32 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 
 		for link, item := range items {
 			if item.ItemID == itemID {
-				item.Price = price
+				item.BuyNowPrice = price
+				items[link] = item
+				break
+			}
+		}
+	})
+
+	doc.Find("[data-testid='price']").Each(func(i int, sel *goquery.Selection) {
+		priceText := strings.TrimSpace(sel.Text())
+		price := parsePrice(priceText)
+		if price == 0 {
+			return
+		}
+
+		priceID, _ := sel.Attr("id")
+		if priceID == "" {
+			return
+		}
+
+		itemID := strings.TrimSuffix(priceID, "-price")
+
+		for link, item := range items {
+			if item.ItemID == itemID {
+				if item.BuyNowPrice == 0 {
+					item.Price = price
+				}
 				items[link] = item
 				break
 			}
@@ -392,14 +405,18 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 	})
 
 	priceCount := 0
+	buyNowPriceCount := 0
 	for _, item := range items {
 		if item.Price > 0 {
 			priceCount++
 		}
+		if item.BuyNowPrice > 0 {
+			buyNowPriceCount++
+		}
 	}
 
 	if s.logger != nil {
-		s.logger.Printf("[Tradera scraper] Found %d items, %d with prices from data-testid selectors", len(items), priceCount)
+		s.logger.Printf("[Tradera scraper] Found %d items, %d with prices, %d with buy now prices from data-testid selectors", len(items), priceCount, buyNowPriceCount)
 	}
 
 	var ads []RawAd
@@ -408,6 +425,7 @@ func (s *MarketplaceService) ParseTraderaDoc(doc *goquery.Document) []RawAd {
 			Link:        item.Link,
 			Title:       item.Title,
 			Price:       item.Price,
+			BuyNowPrice: item.BuyNowPrice,
 			Marketplace: "tradera",
 		}
 		if item.Image != "" {
@@ -536,11 +554,43 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 			title = strings.TrimSpace(titleAttr)
 		}
 
-		priceText := strings.TrimSpace(sel.Find(".item-card_priceDetails__TzN1U").Text())
-		if priceText == "" {
-			priceText = strings.TrimSpace(sel.Find("[class*='price']").First().Text())
+		price := 0.0
+		buyNowPrice := 0.0
+
+		// BuyNowPrice: SÖK ENDAST bin-price
+		sel.Find("[data-testid='bin-price']").Each(func(i int, priceSel *goquery.Selection) {
+			priceText := strings.TrimSpace(priceSel.Text())
+			p := parsePrice(priceText)
+			if p == 0 {
+				return
+			}
+			buyNowPrice = p
+		})
+
+		// Price: SÖK ENDAST vanliga price (ej bin)
+
+		sel.Find("[data-testid='price']").Each(func(i int, priceSel *goquery.Selection) {
+			priceText := strings.TrimSpace(priceSel.Text())
+			p := parsePrice(priceText)
+			if p == 0 {
+				return
+			}
+			priceID, _ := priceSel.Attr("id")
+			if priceID == "" {
+				return
+			}
+			// Skip bin-price elements
+			if strings.HasSuffix(priceID, "-bin-price") {
+				return
+			}
+			if price == 0 {
+				price = p
+			}
+		})
+
+		if price == 0 && buyNowPrice > 0 {
+			price = buyNowPrice
 		}
-		price := parsePrice(priceText)
 
 		var imageURLs []string
 		sel.Find("img").Each(func(_ int, imgSel *goquery.Selection) {
@@ -557,6 +607,7 @@ func (s *MarketplaceService) fetchTraderaAdsFromURL(ctx context.Context, searchU
 			Link:        link,
 			Title:       title,
 			Price:       price,
+			BuyNowPrice: buyNowPrice,
 			Marketplace: "tradera",
 			ImageURLs:   imageURLs,
 		}

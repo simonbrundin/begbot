@@ -67,6 +67,7 @@ type Listing struct {
 	EligibleForShipping  *bool      `json:"eligible_for_shipping,omitempty" db:"eligible_for_shipping"`
 	SellerPaysShipping   *bool      `json:"seller_pays_shipping,omitempty" db:"seller_pays_shipping"`
 	BuyNow               *bool      `json:"buy_now,omitempty" db:"buy_now"`
+	BuyNowPrice          *int       `json:"buy_now_price,omitempty" db:"buy_now_price"`
 	IsIntact             *bool      `json:"is_intact,omitempty" db:"is_intact"`
 	IntactCheckReasoning *string    `json:"intact_check_reasoning,omitempty" db:"intact_check_reasoning"`
 }
