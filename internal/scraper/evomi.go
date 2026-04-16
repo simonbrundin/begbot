@@ -47,6 +47,23 @@ func NewEvomiScraper(cfg *config.ScraperConfig, proxyProvider proxy.ProxyProvide
 
 func (s *EvomiScraper) Name() string { return "evomi" }
 
+func (s *EvomiScraper) FetchTraderaSoldHTML(ctx context.Context, brand, model string) (string, error) {
+	searchURL := fmt.Sprintf(
+		"https://www.tradera.com/search?q=%s&af-mobile_brand=%s&af-mobile_model=%s&itemStatus=Sold&sortBy=AddedOn",
+		url.QueryEscape(model),
+		url.QueryEscape(brand),
+		url.QueryEscape(model),
+	)
+
+	apiURL := fmt.Sprintf(
+		"https://scrape.evomi.com/api/v1/scraper/realtime?api_key=%s&url=%s",
+		s.apiKey, url.QueryEscape(searchURL))
+
+	log.Printf("Fetching sold items from Tradera: %s", searchURL)
+
+	return s.doRequest(ctx, apiURL)
+}
+
 func (s *EvomiScraper) FetchTraderaHTML(ctx context.Context, query string) (string, error) {
 	searchURL := fmt.Sprintf("https://www.tradera.com/search?q=%s", url.QueryEscape(query))
 
@@ -56,6 +73,10 @@ func (s *EvomiScraper) FetchTraderaHTML(ctx context.Context, query string) (stri
 
 	log.Printf("Fetching from Evomi Scraper API: %s", searchURL)
 
+	return s.doRequest(ctx, apiURL)
+}
+
+func (s *EvomiScraper) doRequest(ctx context.Context, apiURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)

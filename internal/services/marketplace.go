@@ -35,6 +35,7 @@ type MarketplaceService struct {
 
 type EvomiFetcher interface {
 	FetchTraderaHTML(ctx context.Context, query string) (string, error)
+	FetchTraderaSoldHTML(ctx context.Context, brand, model string) (string, error)
 }
 
 type TraderaFetcher interface {
@@ -76,6 +77,10 @@ func NewMarketplaceService(cfg *config.Config) *MarketplaceService {
 	s.fetchFromURL = s.fetchTraderaAdsFromURL
 
 	return s
+}
+
+func (s *MarketplaceService) GetEvomiScraper() EvomiFetcher {
+	return s.evomiScraper
 }
 
 type RawAd struct {
@@ -1656,37 +1661,57 @@ func (s *MarketplaceService) fetchPricesForZeroPriceItems(ctx context.Context, a
 		return ads
 	}
 
-	if s.logger != nil {
-		s.logger.Printf("[Tradera scraper] Fetching prices for %d items with zero price from individual item pages", zeroPriceCount)
+	return ads
+}
+
+func (s *MarketplaceService) ParseTraderaSoldPrices(htmlContent string) ([]float64, int, error) {
+	if htmlContent == "" {
+		return nil, 0, nil
 	}
 
-	fetchedCount := 0
-	for i, ad := range ads {
-		if ad.Price == 0 {
-			price, err := s.fetchTraderaItemPrice(ctx, ad.Link)
-			if err != nil {
-				if s.logger != nil {
-					s.logger.Printf("[Tradera scraper] Failed to fetch price for %s: %v", ad.Link, err)
-				}
-			} else if price > 0 {
-				ads[i].Price = price
-				fetchedCount++
-				if s.logger != nil {
-					s.logger.Printf("[Tradera scraper] Fetched price %d SEK for %s", int(price), ad.Link)
-				}
-			} else {
-				if s.logger != nil {
-					s.logger.Printf("[Tradera scraper] Price was 0 for %s (HTML might not contain price info)", ad.Link)
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var prices []float64
+
+	doc.Find("[data-testid='price'], [data-testid='bin-price']").Each(func(i int, sel *goquery.Selection) {
+		priceText := strings.TrimSpace(sel.Text())
+		price := parsePrice(priceText)
+		if price > 0 {
+			prices = append(prices, price)
+		}
+	})
+
+	if len(prices) == 0 {
+		doc.Find("span, div").Each(func(i int, sel *goquery.Selection) {
+			text := strings.TrimSpace(sel.Text())
+			if strings.Contains(text, "kr") && !strings.Contains(text, ":-") {
+				return
+			}
+			if strings.HasPrefix(text, "Pris:") {
+				priceText := strings.TrimPrefix(text, "Pris:")
+				priceText = strings.TrimSpace(priceText)
+				price := parsePrice(priceText)
+				if price > 0 {
+					prices = append(prices, price)
 				}
 			}
+		})
+	}
 
-			time.Sleep(200 * time.Millisecond)
+	totalCount := 0
+	countText := doc.Find("text").First().Text()
+	if strings.Contains(countText, "annonser") {
+		re := regexp.MustCompile(`(\d+)\s+annonser`)
+		matches := re.FindStringSubmatch(countText)
+		if len(matches) > 1 {
+			if c, err := strconv.Atoi(matches[1]); err == nil {
+				totalCount = c
+			}
 		}
 	}
 
-	if s.logger != nil {
-		s.logger.Printf("[Tradera scraper] Fetched prices for %d/%d zero-price items", fetchedCount, zeroPriceCount)
-	}
-
-	return ads
+	return prices, totalCount, nil
 }

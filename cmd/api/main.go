@@ -25,15 +25,18 @@ import (
 )
 
 var logger *log.Logger
+var appLog *log.Logger
 
 func init() {
 	f, err := os.OpenFile("/home/simon/repos/begbot/fetch.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
 		logger = log.New(f, "", log.LstdFlags)
 		logger.Println("=== LOG FILE INITIALIZED ===")
+		appLog = logger
 	} else {
 		logger = log.New(os.Stdout, "", log.LstdFlags)
 		logger.Printf("Warning: could not open log file: %v", err)
+		appLog = logger
 	}
 }
 
@@ -69,6 +72,9 @@ func main() {
 	cacheService := services.NewCacheService(cfg)
 	llmService := services.NewLLMService(cfg)
 	valuationService := services.NewValuationService(cfg, database, llmService)
+	if marketplaceService.GetEvomiScraper() != nil {
+		valuationService.SetEvomiScraper(marketplaceService.GetEvomiScraper())
+	}
 	botService := services.NewBotService(cfg, marketplaceService, cacheService, llmService, valuationService, database)
 	messagingService := services.NewMessagingService(cfg, database, llmService)
 
@@ -2189,6 +2195,10 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 
+	// Add timeout to prevent requests from hanging forever
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
 	product, err := s.db.GetProductByID(ctx, req.ProductID)
 	if err != nil {
 		api.WriteError(w, "Produkt hittades inte", "NOT_FOUND", 404)
@@ -2230,7 +2240,18 @@ func (s *Server) collectValuationsHandler(w http.ResponseWriter, r *http.Request
 	logger.Printf("DEBUG collectValuations: ProductID=%s, Manufacturer=%s, Model=%s, Category=%s",
 		productInfo.ProductID, productInfo.Manufacturer, productInfo.Model, productInfo.Category)
 
+	logger.Printf("DEBUG collectValuations: starting CollectAllWithErrors for product_id=%d", req.ProductID)
 	inputs, collectResults := s.valuationService.CollectAllWithErrors(ctx, productInfo)
+	logger.Printf("DEBUG collectValuations: CollectAllWithErrors completed for product_id=%d, collected=%d results=%d", req.ProductID, len(inputs), len(collectResults))
+
+	// Log each collect result for debugging
+	for i, cr := range collectResults {
+		if cr.Error != "" {
+			logger.Printf("DEBUG collectValuations: result[%d] %s ERROR: %s", i, cr.Input.Type, cr.Error)
+		} else if cr.Input != nil {
+			logger.Printf("DEBUG collectValuations: result[%d] %s value=%d", i, cr.Input.Type, cr.Input.Value)
+		}
+	}
 
 	// Log collected inputs for debugging. If a method returns detailed breakdown (e.g. Tradera), include it.
 	logger.Printf("collectValuations: product_id=%d collected=%d inputs=%v", req.ProductID, len(inputs), func() []interface{} {
